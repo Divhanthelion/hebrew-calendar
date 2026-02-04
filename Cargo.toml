@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["hebrew_core", "hebrew_app", "src-tauri"]
+
+[profile.release]
+opt-level = "z"     # Optimize for size
+lto = true          # Link-time optimization
+strip = true        # Strip symbols

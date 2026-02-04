@@ -1,0 +1,10 @@
+# Tauri
+/src-tauri/target/
+/dist/
+
+# Ralph logs (not code)
+.ralph/logs/
+.ralph/state.json
+
+# OS
+.DS_Store

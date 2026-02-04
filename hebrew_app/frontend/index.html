@@ -1,0 +1,1247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hebrew Calendar</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Serif+Hebrew:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* Premium color palette */
+            --deep-space: #0a0a0f;
+            --cosmic-purple: #1a1025;
+            --nebula-blue: #16213e;
+            --starlight: rgba(255, 255, 255, 0.03);
+            --glass: rgba(255, 255, 255, 0.06);
+            --glass-hover: rgba(255, 255, 255, 0.1);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --glass-border-hover: rgba(255, 255, 255, 0.15);
+            
+            /* Accent gradients */
+            --gold: #ffd700;
+            --gold-soft: #d4af37;
+            --gold-glow: rgba(255, 215, 0, 0.3);
+            --amethyst: #9d4edd;
+            --amethyst-soft: #7b2cbf;
+            --sapphire: #4361ee;
+            --sapphire-soft: #3a0ca3;
+            --emerald: #06d6a0;
+            --emerald-soft: #048a81;
+            --ruby: #f72585;
+            --ruby-soft: #b5179e;
+            --amber: #ff8500;
+            
+            /* Text */
+            --text-primary: #ffffff;
+            --text-secondary: rgba(255, 255, 255, 0.7);
+            --text-muted: rgba(255, 255, 255, 0.5);
+            
+            /* Effects */
+            --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
+            --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5);
+            --shadow-gold: 0 4px 20px rgba(255, 215, 0, 0.2);
+            --radius-sm: 12px;
+            --radius: 20px;
+            --radius-lg: 28px;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html {
+            scroll-behavior: smooth;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--deep-space);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+        
+        /* Animated cosmic background */
+        .cosmos {
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            background: 
+                radial-gradient(ellipse at 20% 80%, rgba(157, 78, 221, 0.15) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 20%, rgba(67, 97, 238, 0.15) 0%, transparent 50%),
+                radial-gradient(ellipse at 50% 50%, rgba(6, 214, 160, 0.05) 0%, transparent 60%),
+                var(--deep-space);
+        }
+        
+        .stars {
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            background-image: 
+                radial-gradient(2px 2px at 20px 30px, rgba(255,255,255,0.3), transparent),
+                radial-gradient(2px 2px at 40px 70px, rgba(255,255,255,0.2), transparent),
+                radial-gradient(1px 1px at 90px 40px, rgba(255,255,255,0.3), transparent),
+                radial-gradient(2px 2px at 160px 120px, rgba(255,255,255,0.2), transparent),
+                radial-gradient(1px 1px at 230px 80px, rgba(255,255,255,0.3), transparent),
+                radial-gradient(2px 2px at 300px 150px, rgba(255,255,255,0.2), transparent),
+                radial-gradient(1px 1px at 400px 90px, rgba(255,255,255,0.2), transparent),
+                radial-gradient(2px 2px at 500px 200px, rgba(255,255,255,0.15), transparent),
+                radial-gradient(1px 1px at 600px 50px, rgba(255,255,255,0.2), transparent),
+                radial-gradient(2px 2px at 700px 180px, rgba(255,255,255,0.15), transparent);
+            background-size: 750px 250px;
+            animation: twinkle 8s ease-in-out infinite;
+        }
+        
+        @keyframes twinkle {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
+        }
+        
+        /* Floating orbs */
+        .orb {
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(80px);
+            z-index: -1;
+            animation: float 20s ease-in-out infinite;
+        }
+        
+        .orb-1 {
+            width: 400px;
+            height: 400px;
+            background: rgba(157, 78, 221, 0.2);
+            top: -100px;
+            right: -100px;
+            animation-delay: 0s;
+        }
+        
+        .orb-2 {
+            width: 300px;
+            height: 300px;
+            background: rgba(67, 97, 238, 0.15);
+            bottom: 10%;
+            left: -100px;
+            animation-delay: -7s;
+        }
+        
+        .orb-3 {
+            width: 250px;
+            height: 250px;
+            background: rgba(6, 214, 160, 0.1);
+            top: 40%;
+            right: 10%;
+            animation-delay: -14s;
+        }
+        
+        @keyframes float {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            25% { transform: translate(30px, -30px) scale(1.05); }
+            50% { transform: translate(-20px, 20px) scale(0.95); }
+            75% { transform: translate(20px, 30px) scale(1.02); }
+        }
+        
+        .container {
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 32px 24px;
+            position: relative;
+        }
+        
+        /* Header */
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding: 48px 40px;
+            background: var(--glass);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--glass-border);
+            box-shadow: var(--shadow), inset 0 1px 0 rgba(255,255,255,0.05);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, 
+                transparent 0%, 
+                var(--gold) 20%, 
+                var(--amethyst) 40%, 
+                var(--sapphire) 60%, 
+                var(--emerald) 80%, 
+                transparent 100%);
+            opacity: 0.8;
+        }
+        
+        header::after {
+            content: '✦';
+            position: absolute;
+            top: 20px;
+            right: 24px;
+            font-size: 1.2rem;
+            color: var(--gold);
+            opacity: 0.6;
+            animation: pulse 3s ease-in-out infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 0.4; transform: scale(1); }
+            50% { opacity: 0.8; transform: scale(1.1); }
+        }
+        
+        h1 {
+            font-size: 3rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            background: linear-gradient(135deg, var(--gold) 0%, #fff5cc 50%, var(--gold) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 12px;
+            position: relative;
+            display: inline-block;
+        }
+        
+        h1::after {
+            content: '';
+            position: absolute;
+            bottom: -8px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 60px;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, var(--gold), transparent);
+            border-radius: 2px;
+        }
+        
+        .hebrew-title {
+            font-family: 'Noto Serif Hebrew', serif;
+            font-size: 2rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            direction: rtl;
+            margin-top: 16px;
+            letter-spacing: 0.05em;
+        }
+        
+        .subtitle {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin-top: 8px;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+        }
+        
+        /* Controls Panel */
+        .controls {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 32px;
+            flex-wrap: wrap;
+            align-items: end;
+            background: var(--glass);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            padding: 24px;
+            border-radius: var(--radius);
+            border: 1px solid var(--glass-border);
+            box-shadow: var(--shadow);
+        }
+        
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .control-group.date-group {
+            flex: 0 0 180px;
+        }
+        
+        .control-group.coords-group {
+            flex: 0 0 130px;
+        }
+        
+        label {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        input, select {
+            padding: 14px 18px;
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-sm);
+            background: rgba(0, 0, 0, 0.3);
+            color: var(--text-primary);
+            font-size: 0.95rem;
+            font-weight: 500;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            width: 100%;
+            outline: none;
+        }
+        
+        input:hover, select:hover {
+            border-color: var(--glass-border-hover);
+            background: rgba(0, 0, 0, 0.35);
+        }
+        
+        input:focus, select:focus {
+            border-color: var(--gold-soft);
+            background: rgba(0, 0, 0, 0.4);
+            box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.1);
+        }
+        
+        input[type="date"]::-webkit-calendar-picker-indicator {
+            filter: invert(0.8);
+            cursor: pointer;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+        }
+        
+        input[type="date"]::-webkit-calendar-picker-indicator:hover {
+            opacity: 1;
+        }
+        
+        /* Buttons */
+        .btn {
+            padding: 14px 24px;
+            border: none;
+            border-radius: var(--radius-sm);
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .btn::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 50%);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        
+        .btn:hover::before {
+            opacity: 1;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--gold-soft) 0%, var(--amber) 100%);
+            color: #0a0a0f;
+            box-shadow: 0 4px 15px rgba(255, 215, 0, 0.3);
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--shadow-gold);
+        }
+        
+        .btn-primary:active {
+            transform: translateY(-1px);
+        }
+        
+        .btn-secondary {
+            background: var(--starlight);
+            color: var(--text-primary);
+            border: 1px solid var(--glass-border);
+        }
+        
+        .btn-secondary:hover {
+            background: var(--glass-hover);
+            border-color: var(--glass-border-hover);
+            transform: translateY(-2px);
+        }
+        
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        /* Grid Layout */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 24px;
+        }
+        
+        /* Cards */
+        .card {
+            background: var(--glass);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-radius: var(--radius);
+            padding: 28px;
+            border: 1px solid var(--glass-border);
+            box-shadow: var(--shadow);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+        }
+        
+        .card:hover {
+            transform: translateY(-6px);
+            box-shadow: var(--shadow-lg);
+            border-color: var(--glass-border-hover);
+        }
+        
+        .card.col-4 {
+            grid-column: span 4;
+        }
+        
+        .card.col-6 {
+            grid-column: span 6;
+        }
+        
+        .card.col-12 {
+            grid-column: span 12;
+        }
+        
+        @media (max-width: 1024px) {
+            .card.col-4, .card.col-6 {
+                grid-column: span 6;
+            }
+        }
+        
+        @media (max-width: 640px) {
+            .card.col-4, .card.col-6, .card.col-12 {
+                grid-column: span 12;
+            }
+        }
+        
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 24px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--glass-border);
+        }
+        
+        .card-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .card-icon::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.2), transparent);
+        }
+        
+        .card-icon.gold { 
+            background: linear-gradient(135deg, rgba(255, 215, 0, 0.2), rgba(212, 175, 55, 0.1));
+            box-shadow: 0 4px 15px rgba(255, 215, 0, 0.15);
+        }
+        .card-icon.purple { 
+            background: linear-gradient(135deg, rgba(157, 78, 221, 0.25), rgba(123, 44, 191, 0.1));
+            box-shadow: 0 4px 15px rgba(157, 78, 221, 0.15);
+        }
+        .card-icon.blue { 
+            background: linear-gradient(135deg, rgba(67, 97, 238, 0.25), rgba(58, 12, 163, 0.1));
+            box-shadow: 0 4px 15px rgba(67, 97, 238, 0.15);
+        }
+        .card-icon.green { 
+            background: linear-gradient(135deg, rgba(6, 214, 160, 0.25), rgba(4, 138, 129, 0.1));
+            box-shadow: 0 4px 15px rgba(6, 214, 160, 0.15);
+        }
+        .card-icon.ruby { 
+            background: linear-gradient(135deg, rgba(247, 37, 133, 0.25), rgba(181, 23, 158, 0.1));
+            box-shadow: 0 4px 15px rgba(247, 37, 133, 0.15);
+        }
+        
+        .card h2 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
+        }
+        
+        /* Date Display */
+        .date-section {
+            text-align: center;
+        }
+        
+        .date-display {
+            font-size: 1.3rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+            letter-spacing: -0.01em;
+        }
+        
+        .hebrew-date {
+            font-family: 'Noto Serif Hebrew', serif;
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--emerald) 0%, #4ade80 50%, var(--emerald) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            direction: rtl;
+            margin: 16px 0 20px;
+            line-height: 1.3;
+        }
+        
+        /* Holiday Badges */
+        .holidays-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+        }
+        
+        .holiday-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 10px 16px;
+            border-radius: 50px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border: 1px solid transparent;
+            transition: all 0.3s ease;
+            cursor: default;
+        }
+        
+        .holiday-badge:hover {
+            transform: translateY(-2px);
+        }
+        
+        .holiday-badge.major {
+            background: linear-gradient(135deg, rgba(247, 37, 133, 0.15) 0%, rgba(181, 23, 158, 0.1) 100%);
+            color: #ff6b9d;
+            border-color: rgba(247, 37, 133, 0.3);
+            box-shadow: 0 4px 15px rgba(247, 37, 133, 0.1);
+        }
+        
+        .holiday-badge.yomtov {
+            background: linear-gradient(135deg, rgba(255, 215, 0, 0.15) 0%, rgba(212, 175, 55, 0.1) 100%);
+            color: var(--gold);
+            border-color: rgba(255, 215, 0, 0.3);
+            box-shadow: 0 4px 15px rgba(255, 215, 0, 0.1);
+        }
+        
+        .holiday-badge.minor {
+            background: linear-gradient(135deg, rgba(157, 78, 221, 0.15) 0%, rgba(123, 44, 191, 0.1) 100%);
+            color: #d8b4fe;
+            border-color: rgba(157, 78, 221, 0.3);
+            box-shadow: 0 4px 15px rgba(157, 78, 221, 0.1);
+        }
+        
+        .holiday-badge.fast {
+            background: linear-gradient(135deg, rgba(67, 97, 238, 0.15) 0%, rgba(58, 12, 163, 0.1) 100%);
+            color: #a5b4fc;
+            border-color: rgba(67, 97, 238, 0.3);
+        }
+        
+        /* Parsha */
+        .parsha-section {
+            text-align: center;
+        }
+        
+        .parsha-box {
+            background: linear-gradient(135deg, rgba(157, 78, 221, 0.1) 0%, rgba(67, 97, 238, 0.05) 100%);
+            padding: 32px 24px;
+            border-radius: var(--radius-sm);
+            border: 1px solid rgba(157, 78, 221, 0.2);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .parsha-box::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--amethyst), transparent);
+        }
+        
+        .parsha-label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 12px;
+        }
+        
+        .parsha-name {
+            font-size: 1.8rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #d8b4fe 0%, #a78bfa 50%, #d8b4fe 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.02em;
+        }
+        
+        .parsha-hebrew {
+            font-family: 'Noto Serif Hebrew', serif;
+            font-size: 1.5rem;
+            color: var(--text-secondary);
+            margin-top: 12px;
+            direction: rtl;
+        }
+        
+        /* Zmanim Grid */
+        .zmanim-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 16px;
+        }
+        
+        .zman-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 18px 20px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--glass-border);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .zman-item::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background: transparent;
+            transition: background 0.3s;
+        }
+        
+        .zman-item:hover {
+            background: rgba(0, 0, 0, 0.3);
+            border-color: var(--glass-border-hover);
+            transform: translateX(4px);
+        }
+        
+        .zman-item.important {
+            background: linear-gradient(135deg, rgba(255, 215, 0, 0.08) 0%, rgba(212, 175, 55, 0.03) 100%);
+            border-color: rgba(255, 215, 0, 0.25);
+        }
+        
+        .zman-item.important::before {
+            background: var(--gold);
+        }
+        
+        .zman-item.dawn::before { background: #60a5fa; }
+        .zman-item.day::before { background: #fbbf24; }
+        .zman-item.dusk::before { background: #f97316; }
+        .zman-item.night::before { background: #818cf8; }
+        
+        .zman-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        
+        .zman-name {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .zman-subtitle {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+        
+        .zman-time {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: var(--gold);
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.02em;
+        }
+        
+        .zman-item.important .zman-time {
+            color: #fcd34d;
+        }
+        
+        /* Special Times Section */
+        .special-times {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-top: 28px;
+        }
+        
+        .special-box {
+            padding: 28px;
+            border-radius: var(--radius-sm);
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid transparent;
+            transition: all 0.3s ease;
+        }
+        
+        .special-box:hover {
+            transform: translateY(-4px);
+        }
+        
+        .special-box.candles {
+            background: linear-gradient(135deg, rgba(247, 37, 133, 0.12) 0%, rgba(181, 23, 158, 0.05) 100%);
+            border-color: rgba(247, 37, 133, 0.25);
+        }
+        
+        .special-box.candles::before,
+        .special-box.candles::after {
+            content: '🕯️';
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 2.5rem;
+            opacity: 0.15;
+            filter: blur(1px);
+        }
+        
+        .special-box.candles::before { left: 20px; }
+        .special-box.candles::after { right: 20px; }
+        
+        .special-box.havdalah {
+            background: linear-gradient(135deg, rgba(157, 78, 221, 0.12) 0%, rgba(123, 44, 191, 0.05) 100%);
+            border-color: rgba(157, 78, 221, 0.25);
+        }
+        
+        .special-box.havdalah::before {
+            content: '✨';
+            position: absolute;
+            top: 50%;
+            left: 20px;
+            transform: translateY(-50%);
+            font-size: 2rem;
+            opacity: 0.2;
+        }
+        
+        .special-label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 10px;
+        }
+        
+        .special-box.candles .special-label { color: #ff6b9d; }
+        .special-box.havdalah .special-label { color: #d8b4fe; }
+        
+        .special-time {
+            font-size: 2.2rem;
+            font-weight: 800;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.02em;
+        }
+        
+        .special-box.candles .special-time { color: #ff6b9d; }
+        .special-box.havdalah .special-time { color: #d8b4fe; }
+        
+        .special-note {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 8px;
+        }
+        
+        /* Status Messages */
+        .error {
+            background: linear-gradient(135deg, rgba(247, 37, 133, 0.15) 0%, rgba(181, 23, 158, 0.1) 100%);
+            color: #ff6b9d;
+            padding: 18px 24px;
+            border-radius: var(--radius-sm);
+            margin-bottom: 24px;
+            border: 1px solid rgba(247, 37, 133, 0.3);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-weight: 500;
+            animation: shake 0.5s ease-in-out;
+        }
+        
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 60px 24px;
+            color: var(--text-secondary);
+        }
+        
+        .loading-spinner {
+            width: 56px;
+            height: 56px;
+            border: 3px solid rgba(255, 215, 0, 0.1);
+            border-top-color: var(--gold);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+            position: relative;
+        }
+        
+        .loading-spinner::after {
+            content: '';
+            position: absolute;
+            inset: -6px;
+            border: 2px solid transparent;
+            border-top-color: rgba(255, 215, 0, 0.3);
+            border-radius: 50%;
+            animation: spin 2s linear infinite reverse;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .hidden {
+            display: none !important;
+        }
+        
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 48px 24px;
+            color: var(--text-muted);
+            grid-column: 1 / -1;
+        }
+        
+        .empty-state-icon {
+            font-size: 4rem;
+            margin-bottom: 16px;
+            opacity: 0.3;
+            animation: float 3s ease-in-out infinite;
+        }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: var(--glass-border-hover);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                padding: 16px;
+            }
+            
+            h1 {
+                font-size: 2rem;
+            }
+            
+            .hebrew-title {
+                font-size: 1.5rem;
+            }
+            
+            .controls {
+                flex-direction: column;
+                align-items: stretch;
+                padding: 20px;
+            }
+            
+            .control-group.date-group,
+            .control-group.coords-group {
+                flex: 1;
+            }
+            
+            .btn-group {
+                justify-content: stretch;
+            }
+            
+            .btn-group .btn {
+                flex: 1;
+                justify-content: center;
+            }
+            
+            .zmanim-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .card {
+                padding: 20px;
+            }
+            
+            .hebrew-date {
+                font-size: 1.6rem;
+            }
+            
+            .special-time {
+                font-size: 1.8rem;
+            }
+        }
+        
+        /* Selection color */
+        ::selection {
+            background: rgba(255, 215, 0, 0.3);
+            color: var(--text-primary);
+        }
+    </style>
+</head>
+<body>
+    <div class="cosmos"></div>
+    <div class="stars"></div>
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+    
+    <div class="container">
+        <header>
+            <h1>Hebrew Calendar</h1>
+            <div class="hebrew-title">לוח עברי</div>
+            <div class="subtitle">Daily Zmanim & Hebrew Dates</div>
+        </header>
+        
+        <div class="controls">
+            <div class="control-group date-group">
+                <label>📅 Date</label>
+                <input type="date" id="date-input">
+            </div>
+            
+            <div class="control-group coords-group">
+                <label>🌐 Latitude</label>
+                <input type="number" id="lat-input" step="0.0001" value="31.7683" placeholder="31.7683">
+            </div>
+            
+            <div class="control-group coords-group">
+                <label>🌐 Longitude</label>
+                <input type="number" id="long-input" step="0.0001" value="35.2137" placeholder="35.2137">
+            </div>
+            
+            <div class="control-group">
+                <label>&nbsp;</label>
+                <button class="btn btn-primary" onclick="loadCalendarData()">
+                    <span>✨</span> Get Calendar
+                </button>
+            </div>
+            
+            <div class="control-group">
+                <label>&nbsp;</label>
+                <div class="btn-group">
+                    <button class="btn btn-secondary" onclick="setToday()">Today</button>
+                    <button class="btn btn-secondary" onclick="setJerusalem()">🇮🇱 Jerusalem</button>
+                    <button class="btn btn-secondary" onclick="setNewYork()">🇺🇸 New York</button>
+                </div>
+            </div>
+        </div>
+        
+        <div id="loading" class="loading hidden">
+            <div class="loading-spinner"></div>
+            <div>Loading calendar data...</div>
+        </div>
+        
+        <div id="error" class="error hidden"></div>
+        
+        <div class="grid" id="results">
+            <!-- Date Card -->
+            <div class="card col-6">
+                <div class="card-header">
+                    <div class="card-icon gold">📅</div>
+                    <h2>Hebrew Date</h2>
+                </div>
+                <div class="date-section">
+                    <div class="date-display" id="gregorian-date">-</div>
+                    <div class="hebrew-date" id="hebrew-date">-</div>
+                    <div class="holidays-container" id="holidays"></div>
+                </div>
+            </div>
+            
+            <!-- Parsha Card -->
+            <div class="card col-6">
+                <div class="card-header">
+                    <div class="card-icon purple">📖</div>
+                    <h2>Weekly Parsha</h2>
+                </div>
+                <div class="parsha-section">
+                    <div class="parsha-box">
+                        <div class="parsha-label">This Week's Torah Reading</div>
+                        <div class="parsha-name" id="parsha-name">-</div>
+                        <div class="parsha-hebrew" id="parsha-hebrew"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Zmanim Card -->
+            <div class="card col-12">
+                <div class="card-header">
+                    <div class="card-icon blue">🌅</div>
+                    <h2>Zmanim — Halachic Times</h2>
+                </div>
+                <div class="zmanim-grid" id="zmanim-list">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📍</div>
+                        <div>Set a location to see zmanim</div>
+                    </div>
+                </div>
+                <div class="special-times" id="special-times"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            setToday();
+            loadCalendarData();
+        });
+        
+        function setToday() {
+            const today = new Date();
+            const dateStr = today.toISOString().split('T')[0];
+            document.getElementById('date-input').value = dateStr;
+        }
+        
+        function setJerusalem() {
+            document.getElementById('lat-input').value = '31.7683';
+            document.getElementById('long-input').value = '35.2137';
+            loadCalendarData();
+        }
+        
+        function setNewYork() {
+            document.getElementById('lat-input').value = '40.7128';
+            document.getElementById('long-input').value = '-74.0060';
+            loadCalendarData();
+        }
+        
+        async function loadCalendarData() {
+            const dateStr = document.getElementById('date-input').value;
+            const lat = parseFloat(document.getElementById('lat-input').value);
+            const long = parseFloat(document.getElementById('long-input').value);
+            
+            if (!dateStr) {
+                showError('Please select a date');
+                return;
+            }
+            
+            showLoading(true);
+            hideError();
+            
+            try {
+                if (window.__TAURI__) {
+                    const data = await window.__TAURI__.invoke('get_calendar_data', {
+                        dateStr: dateStr,
+                        lat: lat,
+                        long: long
+                    });
+                    displayData(data);
+                } else {
+                    const response = await fetch(
+                        `http://localhost:3000/api/v1/calendar/convert?date=${dateStr}&lat=${lat}&long=${long}`
+                    );
+                    if (!response.ok) {
+                        const error = await response.json();
+                        throw new Error(error.error || 'Failed to fetch data');
+                    }
+                    const data = await response.json();
+                    displayData(data);
+                }
+            } catch (err) {
+                showError(err.message || 'An error occurred');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        function displayData(data) {
+            // Gregorian date
+            document.getElementById('gregorian-date').textContent = data.gregorian.display;
+            
+            // Hebrew date
+            document.getElementById('hebrew-date').textContent = 
+                `${data.hebrew.day} ${data.hebrew.month} ${data.hebrew.year}`;
+            
+            // Holidays
+            const holidaysContainer = document.getElementById('holidays');
+            holidaysContainer.innerHTML = '';
+            if (data.holidays && data.holidays.length > 0) {
+                data.holidays.forEach(holiday => {
+                    const badge = document.createElement('span');
+                    badge.className = 'holiday-badge';
+                    
+                    const yomTovKeywords = ['Rosh Hashana', 'Yom Kippur', 'Sukkot', 'Pesach', 'Shavuot', 'Shmini Atzeret', 'Simchat Torah'];
+                    const minorKeywords = ['Chanukah', 'Purim', 'Lag Baomer', 'Tu Bishvat'];
+                    const fastKeywords = ['Fast', 'Tisha', 'Tzom', 'Ta\'anit'];
+                    
+                    if (yomTovKeywords.some(k => holiday.includes(k))) {
+                        badge.classList.add('yomtov');
+                    } else if (minorKeywords.some(k => holiday.includes(k))) {
+                        badge.classList.add('minor');
+                    } else if (fastKeywords.some(k => holiday.includes(k))) {
+                        badge.classList.add('fast');
+                    } else {
+                        badge.classList.add('major');
+                    }
+                    
+                    badge.textContent = holiday;
+                    holidaysContainer.appendChild(badge);
+                });
+            } else {
+                holidaysContainer.innerHTML = '<span style="color: var(--text-muted); font-size: 0.9rem;">No holidays today</span>';
+            }
+            
+            // Parsha
+            const parshaName = document.getElementById('parsha-name');
+            const parshaHebrew = document.getElementById('parsha-hebrew');
+            if (data.parsha) {
+                parshaName.textContent = data.parsha;
+            } else {
+                parshaName.textContent = 'No Parsha (not Shabbat)';
+                parshaHebrew.textContent = '';
+            }
+            
+            // Zmanim
+            const zmanimList = document.getElementById('zmanim-list');
+            zmanimList.innerHTML = '';
+            
+            if (data.zmanim) {
+                const zmanimData = [
+                    { key: 'alot_hashachar', name: 'Alot Hashachar', sub: 'Dawn begins', period: 'dawn', important: false },
+                    { key: 'misheyakir', name: 'Misheyakir', sub: 'Earliest tallis', period: 'dawn', important: true },
+                    { key: 'sunrise', name: 'Netz HaChamah', sub: 'Sunrise', period: 'day', important: true },
+                    { key: 'sof_zman_shema_mga', name: 'Shema (MGA)', sub: 'Latest Mogen Avraham', period: 'day', important: false },
+                    { key: 'sof_zman_shema_gra', name: 'Shema (GRA)', sub: 'Latest Gr"a', period: 'day', important: true },
+                    { key: 'sof_zman_tefila_mga', name: 'Tefila (MGA)', sub: 'Latest Mogen Avraham', period: 'day', important: false },
+                    { key: 'sof_zman_tefila_gra', name: 'Tefila (GRA)', sub: 'Latest Gr"a', period: 'day', important: true },
+                    { key: 'chatzot', name: 'Chatzot', sub: 'Midday', period: 'day', important: false },
+                    { key: 'mincha_gedola', name: 'Mincha Gedola', sub: 'Earliest mincha', period: 'day', important: false },
+                    { key: 'mincha_ketana', name: 'Mincha Ketana', sub: 'Preferred time', period: 'day', important: false },
+                    { key: 'plag_hamincha', name: 'Plag Hamincha', sub: 'Afternoon', period: 'dusk', important: true },
+                    { key: 'sunset', name: 'Shkiah', sub: 'Sunset', period: 'dusk', important: true },
+                    { key: 'tzeit_hakochavim', name: 'Tzeit Hakochavim', sub: 'Nightfall (3 stars)', period: 'night', important: true },
+                    { key: 'tzeit_72_min', name: 'Tzeit (72 min)', sub: 'Rabbeinu Tam', period: 'night', important: false },
+                ];
+                
+                zmanimData.forEach(({ key, name, sub, period, important }) => {
+                    if (data.zmanim[key]) {
+                        const div = document.createElement('div');
+                        div.className = `zman-item ${period}`;
+                        if (important) div.classList.add('important');
+                        
+                        div.innerHTML = `
+                            <div class="zman-info">
+                                <div class="zman-name">${name}</div>
+                                <div class="zman-subtitle">${sub}</div>
+                            </div>
+                            <div class="zman-time">${data.zmanim[key]}</div>
+                        `;
+                        zmanimList.appendChild(div);
+                    }
+                });
+            } else {
+                zmanimList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📍</div>
+                        <div>Set a location to see zmanim</div>
+                    </div>
+                `;
+            }
+            
+            // Special times (Candle lighting & Havdalah)
+            const specialTimes = document.getElementById('special-times');
+            specialTimes.innerHTML = '';
+            
+            if (data.candle_lighting || data.havdalah) {
+                if (data.candle_lighting) {
+                    const candleDiv = document.createElement('div');
+                    candleDiv.className = 'special-box candles';
+                    candleDiv.innerHTML = `
+                        <div class="special-label">🕯️ Candle Lighting</div>
+                        <div class="special-time">${data.candle_lighting}</div>
+                        <div class="special-note">Light candles before this time</div>
+                    `;
+                    specialTimes.appendChild(candleDiv);
+                }
+                
+                if (data.havdalah) {
+                    const havdalahDiv = document.createElement('div');
+                    havdalahDiv.className = 'special-box havdalah';
+                    havdalahDiv.innerHTML = `
+                        <div class="special-label">✨ Havdalah</div>
+                        <div class="special-time">${data.havdalah}</div>
+                        <div class="special-note">End of Shabbat / Yom Tov</div>
+                    `;
+                    specialTimes.appendChild(havdalahDiv);
+                }
+            }
+        }
+        
+        function showLoading(show) {
+            document.getElementById('loading').classList.toggle('hidden', !show);
+            document.getElementById('results').classList.toggle('hidden', show);
+        }
+        
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.innerHTML = `<span>⚠️</span> <span>${message}</span>`;
+            errorDiv.classList.remove('hidden');
+        }
+        
+        function hideError() {
+            document.getElementById('error').classList.add('hidden');
+        }
+    </script>
+</body>
+</html>

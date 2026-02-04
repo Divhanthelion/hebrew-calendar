@@ -1,0 +1,49 @@
+[package]
+name = "hebrew_app"
+version = "0.1.0"
+edition = "2021"
+default-run = "hebrew_app"
+
+[[bin]]
+name = "hebrew_app"
+path = "src/main.rs"
+
+[features]
+default = ["gui", "server"]
+gui = ["dep:tauri", "dep:tauri-build"]
+server = ["dep:axum", "dep:tokio", "dep:tower-http"]
+
+[dependencies]
+# Core library
+hebrew_core = { path = "../hebrew_core" }
+chrono = "0.4"
+
+# CLI parsing
+clap = { version = "4.4", features = ["derive"] }
+
+# Configuration
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+dirs = "5.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Tauri (GUI mode) - optional
+tauri = { version = "^1", features = ["api-all"], optional = true }
+
+# Axum (Server mode) - optional
+axum = { version = "0.7", features = ["macros"], optional = true }
+tokio = { version = "1.35", features = ["rt-multi-thread", "macros"], optional = true }
+tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
+
+[dev-dependencies]
+tower = { version = "0.4", features = ["util"] }
+
+[build-dependencies]
+tauri-build = { version = "^1", features = [], optional = true }

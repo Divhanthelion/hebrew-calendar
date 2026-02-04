@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hebrew Calendar</title>
+    <style>
+        :root {
+            --bg-color: #1a1a2e;
+            --card-bg: #16213e;
+            --text-color: #e94560;
+            --accent-color: #0f3460;
+            --border-color: #533483;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: #fff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: var(--card-bg);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+        }
+        
+        h1 {
+            color: var(--text-color);
+            margin-bottom: 10px;
+        }
+        
+        .hebrew-title {
+            font-size: 1.5em;
+            color: #fff;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+            background: var(--card-bg);
+            padding: 15px;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+        }
+        
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        
+        label {
+            font-size: 0.85em;
+            color: #aaa;
+        }
+        
+        input, select, button {
+            padding: 10px 15px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            background: var(--bg-color);
+            color: #fff;
+            font-size: 1em;
+        }
+        
+        button {
+            background: var(--text-color);
+            border: none;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        
+        button:hover {
+            opacity: 0.9;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid var(--border-color);
+        }
+        
+        .card h2 {
+            color: var(--text-color);
+            margin-bottom: 15px;
+            font-size: 1.2em;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 10px;
+        }
+        
+        .date-display {
+            font-size: 1.5em;
+            margin-bottom: 10px;
+        }
+        
+        .hebrew-date {
+            font-size: 1.3em;
+            color: #4ecca3;
+            margin-bottom: 15px;
+        }
+        
+        .holiday-badge {
+            display: inline-block;
+            background: var(--text-color);
+            color: #fff;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            margin: 5px 5px 5px 0;
+        }
+        
+        .zmanim-list {
+            list-style: none;
+        }
+        
+        .zmanim-list li {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .zmanim-list li:last-child {
+            border-bottom: none;
+        }
+        
+        .zman-name {
+            color: #aaa;
+        }
+        
+        .zman-time {
+            color: #4ecca3;
+            font-weight: bold;
+        }
+        
+        .candle-lighting {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            text-align: center;
+        }
+        
+        .candle-lighting h3 {
+            margin-bottom: 5px;
+        }
+        
+        .candle-time {
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+        
+        .parsha-box {
+            background: var(--accent-color);
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .parsha-name {
+            font-size: 1.3em;
+            color: #4ecca3;
+        }
+        
+        .parsha-hebrew {
+            font-size: 1.1em;
+            color: #aaa;
+            margin-top: 5px;
+        }
+        
+        .error {
+            background: #ff6b6b;
+            color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #aaa;
+        }
+        
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🕎 Hebrew Calendar</h1>
+            <div class="hebrew-title">לוח עברי</div>
+        </header>
+        
+        <div class="controls">
+            <div class="control-group">
+                <label for="date-input">Date</label>
+                <input type="date" id="date-input">
+            </div>
+            
+            <div class="control-group">
+                <label for="lat-input">Latitude</label>
+                <input type="number" id="lat-input" step="0.0001" value="31.7683" placeholder="Latitude">
+            </div>
+            
+            <div class="control-group">
+                <label for="long-input">Longitude</label>
+                <input type="number" id="long-input" step="0.0001" value="35.2137" placeholder="Longitude">
+            </div>
+            
+            <div class="control-group">
+                <label>&nbsp;</label>
+                <button onclick="loadCalendarData()">Get Calendar</button>
+            </div>
+            
+            <div class="control-group">
+                <label>&nbsp;</label>
+                <button onclick="setToday()">Today</button>
+            </div>
+            
+            <div class="control-group">
+                <label>&nbsp;</label>
+                <button onclick="setJerusalem()">Jerusalem</button>
+            </div>
+            
+            <div class="control-group">
+                <label>&nbsp;</label>
+                <button onclick="setNewYork()">New York</button>
+            </div>
+        </div>
+        
+        <div id="loading" class="loading hidden">Loading...</div>
+        <div id="error" class="error hidden"></div>
+        
+        <div class="grid" id="results">
+            <div class="card">
+                <h2>📅 Dates</h2>
+                <div class="date-display" id="gregorian-date"></div>
+                <div class="hebrew-date" id="hebrew-date"></div>
+                <div id="holidays"></div>
+            </div>
+            
+            <div class="card">
+                <h2>📖 Weekly Parsha</h2>
+                <div class="parsha-box">
+                    <div class="parsha-name" id="parsha-name">-</div>
+                    <div class="parsha-hebrew" id="parsha-hebrew"></div>
+                </div>
+            </div>
+            
+            <div class="card" style="grid-column: 1 / -1;">
+                <h2>🌅 Zmanim (Halachic Times)</h2>
+                <ul class="zmanim-list" id="zmanim-list">
+                    <li>No location set</li>
+                </ul>
+                <div id="candle-lighting"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            setToday();
+            loadCalendarData();
+        });
+        
+        function setToday() {
+            const today = new Date();
+            const dateStr = today.toISOString().split('T')[0];
+            document.getElementById('date-input').value = dateStr;
+        }
+        
+        function setJerusalem() {
+            document.getElementById('lat-input').value = '31.7683';
+            document.getElementById('long-input').value = '35.2137';
+            loadCalendarData();
+        }
+        
+        function setNewYork() {
+            document.getElementById('lat-input').value = '40.7128';
+            document.getElementById('long-input').value = '-74.0060';
+            loadCalendarData();
+        }
+        
+        async function loadCalendarData() {
+            const dateStr = document.getElementById('date-input').value;
+            const lat = parseFloat(document.getElementById('lat-input').value);
+            const long = parseFloat(document.getElementById('long-input').value);
+            
+            if (!dateStr) {
+                showError('Please select a date');
+                return;
+            }
+            
+            showLoading(true);
+            hideError();
+            
+            try {
+                // Check if we're running in Tauri or as a web app
+                if (window.__TAURI__) {
+                    // Tauri mode - use invoke
+                    const data = await window.__TAURI__.invoke('get_calendar_data', {
+                        dateStr: dateStr,
+                        lat: lat,
+                        long: long
+                    });
+                    displayData(data);
+                } else {
+                    // API mode - use fetch
+                    const response = await fetch(
+                        `http://localhost:3000/api/v1/calendar/convert?date=${dateStr}&lat=${lat}&long=${long}`
+                    );
+                    if (!response.ok) {
+                        const error = await response.json();
+                        throw new Error(error.error || 'Failed to fetch data');
+                    }
+                    const data = await response.json();
+                    displayData(data);
+                }
+            } catch (err) {
+                showError(err.message || 'An error occurred');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        function displayData(data) {
+            // Gregorian date
+            document.getElementById('gregorian-date').textContent = data.gregorian.display;
+            
+            // Hebrew date
+            document.getElementById('hebrew-date').textContent = 
+                `${data.hebrew.day} ${data.hebrew.month} ${data.hebrew.year}`;
+            
+            // Holidays
+            const holidaysContainer = document.getElementById('holidays');
+            holidaysContainer.innerHTML = '';
+            if (data.holidays && data.holidays.length > 0) {
+                data.holidays.forEach(holiday => {
+                    const badge = document.createElement('span');
+                    badge.className = 'holiday-badge';
+                    badge.textContent = holiday;
+                    holidaysContainer.appendChild(badge);
+                });
+            }
+            
+            // Parsha
+            const parshaName = document.getElementById('parsha-name');
+            const parshaHebrew = document.getElementById('parsha-hebrew');
+            if (data.parsha) {
+                parshaName.textContent = data.parsha;
+                // parshaHebrew.textContent = data.parsha_hebrew || '';
+            } else {
+                parshaName.textContent = 'No Parsha (not Shabbat)';
+                parshaHebrew.textContent = '';
+            }
+            
+            // Zmanim
+            const zmanimList = document.getElementById('zmanim-list');
+            zmanimList.innerHTML = '';
+            
+            if (data.zmanim) {
+                const zmanimOrder = [
+                    ['alot_hashachar', 'Alot Hashachar (Dawn)'],
+                    ['misheyakir', 'Misheyakir'],
+                    ['sunrise', 'Sunrise (Netz)'],
+                    ['sof_zman_shema_mga', 'Latest Shema (MGA)'],
+                    ['sof_zman_shema_gra', 'Latest Shema (GRA)'],
+                    ['sof_zman_tefila_mga', 'Latest Tefila (MGA)'],
+                    ['sof_zman_tefila_gra', 'Latest Tefila (GRA)'],
+                    ['chatzot', 'Chatzot (Midday)'],
+                    ['mincha_gedola', 'Mincha Gedola'],
+                    ['mincha_ketana', 'Mincha Ketana'],
+                    ['plag_hamincha', 'Plag Hamincha'],
+                    ['sunset', 'Sunset (Shkiah)'],
+                    ['tzeit_hakochavim', 'Tzeit Hakochavim (Nightfall)'],
+                    ['tzeit_72_min', 'Tzeit (72 min)'],
+                ];
+                
+                zmanimOrder.forEach(([key, label]) => {
+                    if (data.zmanim[key]) {
+                        const li = document.createElement('li');
+                        li.innerHTML = `
+                            <span class="zman-name">${label}</span>
+                            <span class="zman-time">${data.zmanim[key]}</span>
+                        `;
+                        zmanimList.appendChild(li);
+                    }
+                });
+            } else {
+                zmanimList.innerHTML = '<li>Set a location to see zmanim</li>';
+            }
+            
+            // Candle lighting
+            const candleDiv = document.getElementById('candle-lighting');
+            if (data.candle_lighting) {
+                candleDiv.innerHTML = `
+                    <div class="candle-lighting">
+                        <h3>🕯️ Candle Lighting</h3>
+                        <div class="candle-time">${data.candle_lighting}</div>
+                    </div>
+                `;
+            } else {
+                candleDiv.innerHTML = '';
+            }
+        }
+        
+        function showLoading(show) {
+            document.getElementById('loading').classList.toggle('hidden', !show);
+        }
+        
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.classList.remove('hidden');
+        }
+        
+        function hideError() {
+            document.getElementById('error').classList.add('hidden');
+        }
+    </script>
+</body>
+</html>

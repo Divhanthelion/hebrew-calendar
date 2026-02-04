@@ -1,0 +1,31 @@
+{
+  "build": {
+    "beforeBuildCommand": "",
+    "beforeDevCommand": "",
+    "devPath": "../hebrew_app/frontend",
+    "distDir": "../hebrew_app/frontend/dist"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": true
+    },
+    "bundle": {
+      "active": true,
+      "identifier": "com.hebrew-calendar.app",
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ]
+    },
+    "windows": [
+      {
+        "title": "Hebrew Calendar",
+        "width": 900,
+        "height": 700
+      }
+    ]
+  }
+}
