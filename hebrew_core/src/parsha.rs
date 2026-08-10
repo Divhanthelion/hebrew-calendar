@@ -1,11 +1,10 @@
 //! Parsha (Torah Portion) Calculation Module
-//! 
-//! Computes the weekly Torah portion (parsha) read on Shabbat.
-//! Supports both diaspora and Israel reading schedules.
-//! 
-//! The algorithm finds Shabbat Bereshit (first Shabbat after Simchat Torah),
-//! then counts forward through the standard sequence, applying combination
-//! rules based on the year type (RH day-of-week, leap status, year length).
+//!
+//! Computes the weekly Torah portion (parsha) read on Shabbat using the
+//! diaspora keviyah schedule tables from hebcal (sedra.ts).
+//!
+//! Key = `{leap}{rhDay}{yearType}` where rhDay is 1=Sun..7=Sat and
+//! yearType is 0=incomplete, 1=regular, 2=complete (Cheshvan/Kislev lengths).
 
 use serde::{Deserialize, Serialize};
 
@@ -223,13 +222,26 @@ impl Parsha {
     }
 }
 
-/// Parsha calculator
+/// Parsha calculator (diaspora schedule).
+///
+/// Port of hebcal's sedra keviyah tables:
+/// https://github.com/hebcal/hebcal-es6/blob/main/src/sedra.ts
 pub struct ParshaCalculator;
 
+/// Schedule entry: non-negative = single parsha index (0=Bereshit),
+/// negative = doubled pair starting at -id, CHAG = holiday reading.
+#[derive(Clone, Copy)]
+enum SedraEntry {
+    Single(i8),
+    Double(i8), // stores the positive first index; means pair (i, i+1)
+    Chag,
+}
+
+use SedraEntry::*;
+
 impl ParshaCalculator {
-    /// Standard sequence of parshiot in order (excluding combined forms).
-    /// Contains all 54 individual parshiot + VezotHaberacha.
-    const STANDARD: &'static [Parsha] = &[
+    /// 0-based single-parsha map (0..=52); 53 = Vezot Haberacha unused on Shabbat.
+    const SINGLES: &'static [Parsha] = &[
         Parsha::Bereshit, Parsha::Noach, Parsha::LechLecha, Parsha::Vayera,
         Parsha::ChayeiSara, Parsha::Toldot, Parsha::Vayetzei, Parsha::Vayishlach,
         Parsha::Vayeshev, Parsha::Miketz, Parsha::Vayigash, Parsha::Vayechi,
@@ -246,188 +258,156 @@ impl ParshaCalculator {
         Parsha::HaAzinu,
     ];
 
+    fn double_parsha(first: i8) -> Parsha {
+        match first {
+            21 => Parsha::VayakhelPekudei,
+            26 => Parsha::TazriaMetzora,
+            28 => Parsha::AchreiMotKedoshim,
+            31 => Parsha::BeharBechukotai,
+            38 => Parsha::ChukatBalak,
+            41 => Parsha::MatotMasei,
+            50 => Parsha::NitzavimVayeilech,
+            _ => Parsha::HaftarahOnly,
+        }
+    }
+
+    fn entry_to_parsha(e: SedraEntry) -> Parsha {
+        match e {
+            Single(i) => Self::SINGLES[i as usize],
+            Double(i) => Self::double_parsha(i),
+            Chag => Parsha::HaftarahOnly,
+        }
+    }
+
     /// Get the parsha for a Shabbat (or the Shabbat containing this date).
-    ///
-    /// If the date is not a Shabbat, finds the next Shabbat.
     pub fn get_parsha(date: &HebrewDate) -> Result<Parsha, CalendarError> {
         let shabbat_date = Self::find_shabbat(date)?;
         Self::calculate_parsha_for_shabbat(shabbat_date)
     }
 
-    /// Find the Shabbat containing (or equal to) this date
     fn find_shabbat(date: &HebrewDate) -> Result<HebrewDate, CalendarError> {
         let gregorian = DateConverter::hebrew_to_gregorian(*date)?;
         let weekday = gregorian.weekday().num_days_from_sunday();
-
         if weekday == 6 {
             return Ok(*date);
         }
-
         let days_to_add = (6i64 - weekday as i64).rem_euclid(7);
         let shabbat_gregorian = gregorian + chrono::Duration::days(days_to_add);
         DateConverter::gregorian_to_hebrew(shabbat_gregorian)
     }
 
-    /// Calculate the parsha for a given Shabbat (Hebrew date must already be a Saturday).
     fn calculate_parsha_for_shabbat(date: HebrewDate) -> Result<Parsha, CalendarError> {
         let year = date.year;
-        let is_leap = DateConverter::is_hebrew_leap_year(year);
-
-        // Shabbat Bereshit = first Shabbat after Simchat Torah (Tishrei 23)
-        let simchat_torah = HebrewDate::new(year, HebrewMonth::Tishrei, 23);
-        let st_greg = DateConverter::hebrew_to_gregorian(simchat_torah)?;
-        // chrono dow: 0=Sun, 1=Mon, ..., 6=Sat
-        let st_dow = st_greg.weekday().num_days_from_sunday();
-
-        // Days until next Saturday (dow 6 in chrono)
-        let days_to_bereshit = if st_dow == 6 {
-            7 // If Simchat Torah is Shabbat, Bereshit is next week
-        } else {
-            (6i64 - st_dow as i64 + 7) % 7
-        };
-        let bereshit_shabbat = st_greg + chrono::Duration::days(days_to_bereshit);
-
-        let current_greg = DateConverter::hebrew_to_gregorian(date)?;
-        let weeks_diff = (current_greg - bereshit_shabbat).num_days() / 7;
-
-        if weeks_diff < 0 {
+        let (first_sat_rd, schedule) = Self::schedule_for_year(year)?;
+        let shabbat_rd = DateConverter::hebrew_to_rd(date)?;
+        if shabbat_rd < first_sat_rd {
+            // Before this year's first Saturday — use previous year
+            let (prev_first, prev_sched) = Self::schedule_for_year(year - 1)?;
+            let week = ((shabbat_rd - prev_first) / 7) as usize;
+            if week < prev_sched.len() {
+                return Ok(Self::entry_to_parsha(prev_sched[week]));
+            }
             return Ok(Parsha::HaftarahOnly);
         }
-
-        // Pesach = Nisan 15
-        let pesach = HebrewDate::new(year, HebrewMonth::Nisan, 15);
-        let pesach_greg = DateConverter::hebrew_to_gregorian(pesach)?;
-        // Shabbat before Pesach: subtract (pesach_dow + 1) % 7 days to reach Saturday
-        let pesach_dow = pesach_greg.weekday().num_days_from_sunday(); // 0=Sun
-        let days_back = ((pesach_dow as i64 + 1) % 7) as i64;
-        let shabbat_hagadol = pesach_greg - chrono::Duration::days(days_back);
-
-        let shabbat_hagadol_week = (shabbat_hagadol - bereshit_shabbat).num_days() / 7;
-        let pre_pesach_shabbatot = (shabbat_hagadol_week + 1) as usize;
-
-        let schedule = Self::build_schedule(is_leap, pre_pesach_shabbatot);
-
-        let idx = weeks_diff as usize;
-        if idx < schedule.len() {
-            Ok(schedule[idx])
-        } else if idx == schedule.len() {
-            Ok(Parsha::VezotHaberacha)
+        let week = ((shabbat_rd - first_sat_rd) / 7) as usize;
+        if week < schedule.len() {
+            return Ok(Self::entry_to_parsha(schedule[week]));
+        }
+        // Past end of this year's schedule — next year
+        let (next_first, next_sched) = Self::schedule_for_year(year + 1)?;
+        let week = ((shabbat_rd - next_first) / 7) as usize;
+        if week < next_sched.len() {
+            Ok(Self::entry_to_parsha(next_sched[week]))
         } else {
             Ok(Parsha::HaftarahOnly)
         }
     }
 
-    /// Build the full parsha schedule for a year.
-    ///
-    /// `pre_pesach_count`: number of Shabbatot from Bereshit through Shabbat HaGadol.
-    fn build_schedule(_is_leap: bool, pre_pesach_count: usize) -> Vec<Parsha> {
-        // How many of the 54 parshiot need to fit pre-Pesach.
-        // Post-Pesach always has 11 Shabbatot reading the last 11 parshiot
-        // (Devarim through VezotHaberacha, though VezotHaberacha is Simchat Torah
-        // reading in the fall).
-        //
-        // The first 43 parshiot (Bereshit through Masei) must fit into
-        // pre_pesach_count Shabbatot. Any shortage requires combinations.
-        //
-        // Combination rules (standard Ashkenazi diaspora):
-        // When needed, combine in this priority order (from later to earlier):
-        // 1. Nitzavim-Vayeilech (always combined unless both can be separate)
-        // 2. Chukat-Balak
-        // 3. Matot-Masei
-        // 4. Behar-Bechukotai
-        // 5. AchreiMot-Kedoshim
-        // 6. Tazria-Metzora
-        // 7. Vayakhel-Pekudei
+    /// Returns (RD of first Saturday on/after RH, schedule array).
+    fn schedule_for_year(year: i32) -> Result<(i32, Vec<SedraEntry>), CalendarError> {
+        let rh_rd = DateConverter::rosh_hashanah(year);
+        // First Saturday on or after RH:
+        // RD % 7: 0=Sat, 1=Sun, ..., 6=Fri. We want RD with rem 0.
+        let rem = rh_rd.rem_euclid(7);
+        let first_sat = if rem == 0 { rh_rd } else { rh_rd + (7 - rem) };
 
-        let mut pre_pesach = Vec::with_capacity(pre_pesach_count);
+        let leap = DateConverter::is_hebrew_leap_year(year);
+        // RH day: 1=Sun ... 7=Sat (hebcal convention)
+        let rh_date = HebrewDate::new(year, HebrewMonth::Tishrei, 1);
+        let rh_day = rh_date.day_of_week() + 1; // 0=Sun → 1
+        let ytype = match DateConverter::hebrew_year_type(year) {
+            crate::calendar::YearType::DeficientCommon | crate::calendar::YearType::DeficientLeap => 0,
+            crate::calendar::YearType::RegularCommon | crate::calendar::YearType::RegularLeap => 1,
+            crate::calendar::YearType::CompleteCommon | crate::calendar::YearType::CompleteLeap => 2,
+        };
+        let key = format!("{}{}{}", leap as u8, rh_day, ytype);
+        let schedule = Self::lookup_diaspora_schedule(&key)
+            .ok_or_else(|| CalendarError::CalculationError(
+                format!("Unknown sedra year type key {} for year {}", key, year)
+            ))?;
+        Ok((first_sat, schedule))
+    }
 
-        // All 43 parshiot from Bereshit (0) through Masei (42)
-        let all_pre: Vec<Parsha> = Self::STANDARD[..43].to_vec();
-
-        let mut combined = vec![false; 43];
-        let mut needed_combinations = all_pre.len().saturating_sub(pre_pesach_count);
-
-        // Combination pairs: indices in reverse, from later to earlier
-        let pairs: &[(usize, usize, Parsha)] = &[
-            (42, 41, Parsha::MatotMasei),         // Matot + Masei
-            (39, 40, Parsha::ChukatBalak),        // Chukat + Balak
-            (31, 32, Parsha::BeharBechukotai),    // Behar + Bechukotai
-            (28, 29, Parsha::AchreiMotKedoshim),  // AchreiMot + Kedoshim
-            (26, 27, Parsha::TazriaMetzora),      // Tazria + Metzora
-            (21, 22, Parsha::VayakhelPekudei),    // Vayakhel + Pekudei
+    fn lookup_diaspora_schedule(key: &str) -> Option<Vec<SedraEntry>> {
+        // hebcal first tries `{leap}{rhDay}{type}`, then appends IL flag
+        // (0=diaspora, 1=Israel) when the short key is absent.
+        let candidates = [
+            key.to_string(),
+            format!("{}0", key), // diaspora
         ];
-
-        for &(i, j, _combined_parsha) in pairs.iter() {
-            if needed_combinations == 0 {
-                break;
-            }
-            if !combined[i] && !combined[j] {
-                combined[i] = true;
-                combined[j] = true;
-                needed_combinations -= 1;
+        // Also resolve known aliases used in sedra.ts
+        for cand in &candidates {
+            let resolved = match cand.as_str() {
+                "0221" => "020",
+                "0310" => "0220",
+                "0311" => "020",
+                "1310" => "1220",
+                "1311" => "1221",
+                "1721" => "170",
+                other => other,
+            };
+            if let Some(sched) = Self::build_type(resolved) {
+                return Some(sched);
             }
         }
+        None
+    }
 
-        // Build the actual list
-        let mut i = 0;
-        while i < 43 {
-            if i == 41 && combined[41] && combined[42] {
-                pre_pesach.push(Parsha::MatotMasei);
-                i += 2;
-            } else if i == 39 && combined[39] && combined[40] {
-                pre_pesach.push(Parsha::ChukatBalak);
-                i += 2;
-            } else if i == 31 && combined[31] && combined[32] {
-                pre_pesach.push(Parsha::BeharBechukotai);
-                i += 2;
-            } else if i == 28 && combined[28] && combined[29] {
-                pre_pesach.push(Parsha::AchreiMotKedoshim);
-                i += 2;
-            } else if i == 26 && combined[26] && combined[27] {
-                pre_pesach.push(Parsha::TazriaMetzora);
-                i += 2;
-            } else if i == 21 && combined[21] && combined[22] {
-                pre_pesach.push(Parsha::VayakhelPekudei);
-                i += 2;
-            } else {
-                pre_pesach.push(all_pre[i]);
-                i += 1;
-            }
-        }
-
-        // Post-Pesach always: Devarim through VezotHaberacha
-        // Devarim=43, Vaetchanan=44, ..., HaAzinu=52
-        // Nitzavim+Vayeilech may be combined (indices 51,52)
-        let post_pesach: Vec<Parsha> = vec![
-            Parsha::Devarim,       // 43
-            Parsha::Vaetchanan,    // 44
-            Parsha::Eikev,         // 45
-            Parsha::Reeh,          // 46
-            Parsha::Shoftim,       // 47
-            Parsha::KiTeitzei,     // 48
-            Parsha::KiTavo,        // 49
-            Parsha::Nitzavim,      // 50 (or combined)
-            Parsha::Vayeilech,     // 51
-            Parsha::HaAzinu,       // 52
-        ];
-
-        pre_pesach.extend(post_pesach);
-        pre_pesach
+    fn build_type(key: &str) -> Option<Vec<SedraEntry>> {
+        let entries: &[SedraEntry] = match key {
+            "020" => &[Single(51), Single(52), Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Double(21), Single(23), Single(24), Chag, Single(25), Double(26), Double(28), Single(30), Double(31), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Double(50)],
+            "0220" => &[Single(51), Single(52), Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Double(21), Single(23), Single(24), Chag, Single(25), Double(26), Double(28), Single(30), Double(31), Single(33), Chag, Single(34), Single(35), Single(36), Single(37), Double(38), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Double(50)],
+            "0510" => &[Single(52), Chag, Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Double(21), Single(23), Single(24), Chag, Chag, Single(25), Double(26), Double(28), Single(30), Double(31), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Single(50)],
+            "0511" => &[Single(52), Chag, Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Double(21), Single(23), Single(24), Chag, Single(25), Double(26), Double(28), Single(30), Single(31), Single(32), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Single(50)],
+            "052" => &[Single(52), Chag, Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Single(21), Single(22), Single(23), Single(24), Chag, Single(25), Double(26), Double(28), Single(30), Double(31), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Single(50)],
+            "070" => &[Chag, Single(52), Chag, Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Double(21), Single(23), Single(24), Chag, Single(25), Double(26), Double(28), Single(30), Double(31), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Single(50)],
+            "072" => &[Chag, Single(52), Chag, Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Double(21), Single(23), Single(24), Chag, Single(25), Double(26), Double(28), Single(30), Double(31), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Double(50)],
+            "1200" => &[Single(51), Single(52), Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Single(21), Single(22), Single(23), Single(24), Single(25), Single(26), Single(27), Chag, Single(28), Single(29), Single(30), Single(31), Single(32), Single(33), Chag, Single(34), Single(35), Single(36), Single(37), Double(38), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Double(50)],
+            "1201" => &[Single(51), Single(52), Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Single(21), Single(22), Single(23), Single(24), Single(25), Single(26), Single(27), Chag, Single(28), Single(29), Single(30), Single(31), Single(32), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Double(50)],
+            "1220" => &[Single(51), Single(52), Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Single(21), Single(22), Single(23), Single(24), Single(25), Single(26), Single(27), Chag, Chag, Single(28), Single(29), Single(30), Single(31), Single(32), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Single(50)],
+            "1221" => &[Single(51), Single(52), Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Single(21), Single(22), Single(23), Single(24), Single(25), Single(26), Single(27), Chag, Single(28), Single(29), Single(30), Single(31), Single(32), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Single(41), Single(42), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Single(50)],
+            "150" => &[Single(52), Chag, Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Single(21), Single(22), Single(23), Single(24), Single(25), Single(26), Single(27), Single(28), Chag, Single(29), Single(30), Single(31), Single(32), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Single(41), Single(42), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Single(50)],
+            "152" => &[Single(52), Chag, Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Single(21), Single(22), Single(23), Single(24), Single(25), Single(26), Single(27), Single(28), Chag, Single(29), Single(30), Single(31), Single(32), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Single(41), Single(42), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Double(50)],
+            "170" => &[Chag, Single(52), Chag, Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Single(21), Single(22), Single(23), Single(24), Single(25), Single(26), Single(27), Chag, Single(28), Single(29), Single(30), Single(31), Single(32), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Double(50)],
+            "1720" => &[Chag, Single(52), Chag, Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Single(21), Single(22), Single(23), Single(24), Single(25), Single(26), Single(27), Chag, Single(28), Single(29), Single(30), Single(31), Single(32), Single(33), Chag, Single(34), Single(35), Single(36), Single(37), Double(38), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Double(50)],
+            _ => return None,
+        };
+        Some(entries.to_vec())
     }
 }
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::calendar::{DateConverter, HebrewMonth};
+    use chrono::NaiveDate;
 
     #[test]
     fn test_get_parsha_no_panic_for_5784() {
-        // 5784 is a deficient leap year (383 days)
         let rh = DateConverter::rosh_hashanah(5784);
         let start = DateConverter::rd_to_gregorian(rh).unwrap();
         let end = DateConverter::rd_to_gregorian(DateConverter::rosh_hashanah(5785)).unwrap();
-
         let mut current = start;
         while current.weekday().num_days_from_sunday() != 6 {
             current = current.succ_opt().unwrap();
@@ -441,11 +421,9 @@ mod tests {
 
     #[test]
     fn test_get_parsha_no_panic_for_5783() {
-        // 5783 is a complete common year (355 days)
         let rh = DateConverter::rosh_hashanah(5783);
         let start = DateConverter::rd_to_gregorian(rh).unwrap();
         let end = DateConverter::rd_to_gregorian(DateConverter::rosh_hashanah(5784)).unwrap();
-
         let mut current = start;
         while current.weekday().num_days_from_sunday() != 6 {
             current = current.succ_opt().unwrap();
@@ -459,28 +437,23 @@ mod tests {
 
     #[test]
     fn test_shabbat_bereishit_5784() {
-        // Tishrei 28, 5784 = Oct 14, 2023 (Shabbat Bereshit)
-        let date = HebrewDate::new(5784, HebrewMonth::Tishrei, 28);
-        let parsha = ParshaCalculator::get_parsha(&date).unwrap();
-        assert_eq!(parsha, Parsha::Bereshit);
+        // Oct 14, 2023 = Tishrei 29, 5784
+        let date = HebrewDate::new(5784, HebrewMonth::Tishrei, 29);
+        assert_eq!(ParshaCalculator::get_parsha(&date).unwrap(), Parsha::Bereshit);
     }
 
     #[test]
     fn test_shabbat_noach_5784() {
-        // Cheshvan 6, 5784 should be Noach
         let date = HebrewDate::new(5784, HebrewMonth::Cheshvan, 6);
-        let parsha = ParshaCalculator::get_parsha(&date).unwrap();
-        assert_eq!(parsha, Parsha::Noach);
+        assert_eq!(ParshaCalculator::get_parsha(&date).unwrap(), Parsha::Noach);
     }
 
     #[test]
     fn test_find_shabbat() {
-        // Tishrei 15, 5784 = Saturday, already a Shabbat
         let shabbat_date = HebrewDate::new(5784, HebrewMonth::Tishrei, 15);
         let shabbat = ParshaCalculator::find_shabbat(&shabbat_date).unwrap();
         assert_eq!(shabbat.day, 15);
 
-        // Tishrei 16, 5784 = Sunday → next Shabbat = Tishrei 22
         let sunday = HebrewDate::new(5784, HebrewMonth::Tishrei, 16);
         let shabbat = ParshaCalculator::find_shabbat(&sunday).unwrap();
         assert_eq!(shabbat.day, 22);
@@ -509,24 +482,72 @@ mod tests {
     }
 
     #[test]
-    fn test_build_schedule_common_year() {
-        // Common year with ~37 pre-Pesach Shabbatot → need 6 combos
-        let sched = ParshaCalculator::build_schedule(false, 37);
-        // Should have 37 + 10 = 47 entries (pre_pesach + post_pesach)
-        assert_eq!(sched.len(), 47);
-        // First should be Bereshit
-        assert_eq!(sched[0], Parsha::Bereshit);
-        // Last should be HaAzinu
-        assert_eq!(sched[sched.len() - 1], Parsha::HaAzinu);
+    fn test_5784_against_hebcal() {
+        let cases = [
+            (2023, 10, 14, Parsha::Bereshit),
+            (2023, 10, 21, Parsha::Noach),
+            (2024, 3, 9, Parsha::Vayakhel),
+            (2024, 3, 16, Parsha::Pekudei),
+            (2024, 3, 23, Parsha::Vayikra),
+            (2024, 4, 13, Parsha::Tazria),
+            (2024, 4, 20, Parsha::Metzora),
+            (2024, 4, 27, Parsha::HaftarahOnly), // Pesach Chol HaMoed
+            (2024, 5, 4, Parsha::AchreiMot),
+            (2024, 5, 11, Parsha::Kedoshim),
+            (2024, 8, 3, Parsha::MatotMasei),
+            (2024, 8, 10, Parsha::Devarim),
+            (2024, 8, 17, Parsha::Vaetchanan),
+            (2024, 8, 31, Parsha::Reeh),
+            (2024, 9, 28, Parsha::NitzavimVayeilech),
+            (2024, 10, 5, Parsha::HaAzinu),
+        ];
+        for (y, m, d, expected) in cases {
+            let g = NaiveDate::from_ymd_opt(y, m, d).unwrap();
+            let h = DateConverter::gregorian_to_hebrew(g).unwrap();
+            let got = ParshaCalculator::get_parsha(&h).unwrap();
+            assert_eq!(got, expected, "{}-{:02}-{:02} ({}): got {:?}, expected {:?}",
+                y, m, d, h.format(), got, expected);
+        }
     }
 
     #[test]
-    fn test_build_schedule_leap_year() {
-        // Leap year with ~41 pre-Pesach Shabbatot → need 2 combos
-        let sched = ParshaCalculator::build_schedule(true, 41);
-        // 41 pre + 10 post = 51
-        assert_eq!(sched.len(), 51);
-        assert_eq!(sched[0], Parsha::Bereshit);
-        assert_eq!(sched[sched.len() - 1], Parsha::HaAzinu);
+    fn test_5784_year_key() {
+        // leap, RH Saturday (7), deficient (0) → "170"
+        let (first_sat, sched) = ParshaCalculator::schedule_for_year(5784).unwrap();
+        let rh = DateConverter::rosh_hashanah(5784);
+        assert_eq!(rh.rem_euclid(7), 0, "RH 5784 should be Saturday");
+        assert_eq!(first_sat, rh);
+        assert!(!sched.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod extra_checks {
+    use super::*;
+    use crate::calendar::{DateConverter, HebrewMonth};
+    use chrono::NaiveDate;
+
+    #[test]
+    fn test_5783_against_hebcal_sample() {
+        let cases = [
+            (2022, 10, 22, Parsha::Bereshit),
+            (2023, 3, 25, Parsha::Vayikra),
+            (2023, 4, 15, Parsha::Shemini),
+            (2023, 4, 22, Parsha::TazriaMetzora),
+            (2023, 7, 8, Parsha::Pinchas),
+            (2023, 9, 9, Parsha::NitzavimVayeilech),
+        ];
+        for (y, m, d, expected) in cases {
+            let g = NaiveDate::from_ymd_opt(y, m, d).unwrap();
+            let h = DateConverter::gregorian_to_hebrew(g).unwrap();
+            let got = ParshaCalculator::get_parsha(&h).unwrap();
+            assert_eq!(got, expected, "{}-{:02}-{:02} ({}): got {:?}", y, m, d, h.format(), got);
+        }
+    }
+
+    #[test]
+    fn test_adar_ii_format() {
+        let d = HebrewDate::new(5784, HebrewMonth::Adar, 14);
+        assert!(d.format().contains("Adar II"), "got {}", d.format());
     }
 }

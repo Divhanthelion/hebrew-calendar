@@ -81,7 +81,8 @@ impl HebrewCalendar {
         let hebrew = DateConverter::gregorian_to_hebrew(date)?;
         
         // Get parsha
-        let parsha = if hebrew.day_of_week() == 6 { // Saturday (0=Sunday, 6=Saturday)
+        let is_shabbat = hebrew.day_of_week() == 6; // Saturday (0=Sunday)
+        let parsha = if is_shabbat {
             Some(ParshaCalculator::get_parsha(&hebrew)?)
         } else {
             None
@@ -89,15 +90,25 @@ impl HebrewCalendar {
         
         // Get holidays
         let holidays = HolidayCalculator::get_holidays(&hebrew)?;
-        let is_yom_tov = holidays.iter().any(|h| h.is_yom_tov()) || hebrew.day_of_week() == 6; // Shabbat
+        let has_yom_tov = holidays.iter().any(|h| h.is_yom_tov());
+        // Field means "Shabbat or Yom Tov" for UI highlighting
+        let is_yom_tov = has_yom_tov || is_shabbat;
         
         // Calculate zmanim if location provided
         let (zmanim, candle_lighting) = if let Some(loc) = location {
             let calc = ZmanimCalculator::new(loc);
             let z = calc.calculate(date)?;
             
-            // Calculate candle lighting
-            let candle = if is_yom_tov || hebrew.day_of_week() == 5 { // Friday (day_of_week 5) or erev Yom Tov
+            // Candle lighting on erev Shabbat (Friday) or erev Yom Tov
+            let tomorrow_is_yom_tov = if let Some(tomorrow) = date.succ_opt() {
+                let next_h = DateConverter::gregorian_to_hebrew(tomorrow)?;
+                HolidayCalculator::get_holidays(&next_h)?
+                    .iter()
+                    .any(|h| h.is_yom_tov())
+            } else {
+                false
+            };
+            let candle = if hebrew.day_of_week() == 5 || tomorrow_is_yom_tov {
                 calc.candle_lighting(&z, candle_offset_minutes)?
             } else {
                 None
@@ -231,6 +242,7 @@ mod tests {
         let data = HebrewCalendar::calculate_day(date, None, 18).unwrap();
         assert!(data.parsha.is_some(),
             "Shabbat should have parsha (bug fix validation)");
+        assert_eq!(data.parsha, Some(parsha::Parsha::Bereshit));
     }
 
     #[test]

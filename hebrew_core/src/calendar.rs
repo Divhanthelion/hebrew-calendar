@@ -71,6 +71,14 @@ impl HebrewMonth {
             HebrewMonth::Elul => "Elul",
         }
     }
+
+    /// Month name aware of leap years (`Adar` → `Adar II`).
+    pub fn name_for_year(&self, year: i32) -> &'static str {
+        match self {
+            HebrewMonth::Adar if DateConverter::is_hebrew_leap_year(year) => "Adar II",
+            _ => self.name(),
+        }
+    }
     
     pub fn to_number(&self, is_leap: bool) -> u8 {
         match (self, is_leap) {
@@ -108,7 +116,7 @@ impl HebrewDate {
     
     /// Format as a human-readable string
     pub fn format(&self) -> String {
-        format!("{} {} {}", self.day, self.month.name(), self.year)
+        format!("{} {} {}", self.day, self.month.name_for_year(self.year), self.year)
     }
     
     /// Get day of week (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
@@ -360,7 +368,7 @@ impl DateConverter {
     }
     
     /// Convert Hebrew date to R.D.
-    fn hebrew_to_rd(hebrew: HebrewDate) -> Result<i32, CalendarError> {
+    pub fn hebrew_to_rd(hebrew: HebrewDate) -> Result<i32, CalendarError> {
         let is_leap = Self::is_hebrew_leap_year(hebrew.year);
         let month_num = hebrew.month.to_number(is_leap);
         

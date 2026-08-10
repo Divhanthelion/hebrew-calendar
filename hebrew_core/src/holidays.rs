@@ -276,7 +276,14 @@ impl HolidayCalculator {
                 // In common years, this is the only Adar.
                 // In leap years, Adar == Adar II (see HebrewMonth enum).
                 match date.day {
-                    13 => Some(Holiday::TaanitEsther),
+                    11 | 13 => {
+                        // Ta'anit Esther: normally Adar 13; if that is Shabbat, observed Thursday (11)
+                        if Self::is_taanit_esther(date) {
+                            Some(Holiday::TaanitEsther)
+                        } else {
+                            None
+                        }
+                    }
                     14 => Some(Holiday::Purim),
                     15 => Some(Holiday::ShushanPurim),
                     _ => None,
@@ -303,108 +310,124 @@ impl HolidayCalculator {
                 _ => None,
             },
             HebrewMonth::Tammuz => {
-                if date.day == 17 {
+                // 17 Tammuz: if Shabbat, postponed to Sunday (18)
+                if date.day == 17 && date.day_of_week() != 6 {
                     Some(Holiday::ShivaAsarBTammuz)
+                } else if date.day == 18 {
+                    let tammuz_17 = HebrewDate::new(date.year, HebrewMonth::Tammuz, 17);
+                    if tammuz_17.day_of_week() == 6 {
+                        Some(Holiday::ShivaAsarBTammuz)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
             },
             HebrewMonth::Av => match date.day {
-                9 => Some(Holiday::TishaBAv),
+                9 => {
+                    // Tisha B'Av: if Shabbat, postponed to Sunday (10)
+                    if date.day_of_week() != 6 {
+                        Some(Holiday::TishaBAv)
+                    } else {
+                        None
+                    }
+                }
+                10 => {
+                    let av_9 = HebrewDate::new(date.year, HebrewMonth::Av, 9);
+                    if av_9.day_of_week() == 6 {
+                        Some(Holiday::TishaBAv)
+                    } else {
+                        None
+                    }
+                }
                 15 => Some(Holiday::TuBAv),
                 _ => None,
             },
             HebrewMonth::Elul => None,
         }
     }
+
+    /// Ta'anit Esther falls on Adar 13, or Thursday Adar 11 when 13 is Shabbat.
+    /// (Hebcal: `pesachAbs - (pesachDow == Tue ? 33 : 31)`.)
+    fn is_taanit_esther(date: &HebrewDate) -> bool {
+        let pesach = HebrewDate::new(date.year, HebrewMonth::Nisan, 15);
+        let pesach_dow = pesach.day_of_week(); // 0=Sun
+        // When Pesach is Tuesday, Adar 13 is Shabbat → fast on Thursday (33 days before Pesach)
+        let days_before = if pesach_dow == 2 { 33 } else { 31 };
+        if let (Ok(pesach_g), Ok(date_g)) = (
+            DateConverter::hebrew_to_gregorian(pesach),
+            DateConverter::hebrew_to_gregorian(*date),
+        ) {
+            (pesach_g - date_g).num_days() == days_before
+        } else {
+            false
+        }
+    }
     
     /// Get modern Israeli national holidays.
     ///
-    /// Rules:
-    /// - Yom HaShoah (Iyar 27): moves to 26 if 27 is Friday, to 28 if 27 is Sunday.
-    /// - Yom HaZikaron (Iyar 4): moves to 3 if 4 is Thursday, to 5 if 4 is Friday or Saturday.
-    /// - Yom HaAtzmaut (Iyar 5): follows Yom HaZikaron.
+    /// Rules (matching hebcal / Israeli observance):
+    /// - Yom HaShoah (Nisan 27): Fri→26, Sun→28. Observed since 5711.
+    /// - Yom HaZikaron / Atzmaut: based on Pesach day-of-week (see `dateYomHaZikaron`).
     /// - Yom Yerushalayim (Iyar 28): fixed.
     fn get_modern_israeli_holiday(date: &HebrewDate) -> Option<Holiday> {
+        // --- Yom HaShoah: Nisan 27 ---
+        if date.month == HebrewMonth::Nisan && date.year >= 5711 {
+            let nisan_27 = HebrewDate::new(date.year, HebrewMonth::Nisan, 27);
+            let dow = nisan_27.day_of_week();
+            let actual_day = match dow {
+                5 => 26, // Friday → Thursday
+                0 => 28, // Sunday → Monday
+                _ => 27,
+            };
+            if date.day == actual_day {
+                return Some(Holiday::YomHaShoah);
+            }
+        }
+
         if date.month != HebrewMonth::Iyar {
             return None;
         }
-        
-        let day = date.day;
-        
-        // Compute Nisan 1 day of week for this year.
-        let rh = DateConverter::rosh_hashanah(date.year);
-        // rd % 7: 0=Sat, 1=Sun, 2=Mon, 3=Tue, 4=Wed, 5=Thu, 6=Fri
-        let rh_dow_raw = rh.rem_euclid(7);
-        // Convert to our convention: 0=Sun.  Formula: (rd_dow + 6) % 7
-        let rh_dow = ((rh_dow_raw + 6).rem_euclid(7)) as u8;
-        
-        let nisan1_offset = Self::days_from_tishrei_to_nisan(date.year);
-        
-        // Nisan 1 dow
-        let nisan1_dow = ((rh_dow as i64 + nisan1_offset as i64).rem_euclid(7)) as u8;
-        
-        // Pesach (Nisan 15) day of week
-        let pesach_dow = ((nisan1_dow as i64 + 14).rem_euclid(7)) as u8;
-        
-        // --- Yom HaShoah: Iyar 27 (norminal) ---
-        // Moved to 26 if 27 is Friday, to 28 if 27 is Sunday.
-        let yhs_nominal_dow = Self::add_days_to_dow(pesach_dow, 42); // Nisan 15 -> Iyar 27 = 42 days
-        
-        let yhs_actual_day = 
-            if yhs_nominal_dow == 5 { 26 }       // Friday → Thursday (26)
-            else if yhs_nominal_dow == 0 { 28 }  // Sunday → Monday (28)
-            else { 27 };
-        
-        if day == yhs_actual_day {
-            return Some(Holiday::YomHaShoah);
+
+        // --- Yom HaZikaron / Yom HaAtzmaut (since 5708) ---
+        if date.year >= 5708 {
+            if let Some(zikaron_day) = Self::yom_hazikaron_day(date.year) {
+                if date.day == zikaron_day {
+                    return Some(Holiday::YomHaZikaron);
+                }
+                if date.day == zikaron_day + 1 {
+                    return Some(Holiday::YomHaAtzmaut);
+                }
+            }
         }
-        
-        // --- Yom HaZikaron: Iyar 4 (nominal) ---
-        // Moved to 3 if 4 is Thursday, to 5 if 4 is Friday or Saturday.
-        let yhz_nominal_dow = Self::add_days_to_dow(pesach_dow, 19); // Nisan 15 -> Iyar 4 = 19 days
-        
-        let yhz_actual_day =
-            if yhz_nominal_dow == 4 { 3 }           // Thursday → Wednesday (3)
-            else if yhz_nominal_dow == 5 || yhz_nominal_dow == 6 { 5 }  // Fri/Sat → Sunday (5)
-            else { 4 };
-        
-        if day == yhz_actual_day {
-            return Some(Holiday::YomHaZikaron);
-        }
-        
-        // --- Yom HaAtzmaut: Iyar 5, follows Yom HaZikaron ---
-        let yha_actual_day =
-            if yhz_actual_day == 4 { 5 }   // normal
-            else if yhz_actual_day == 3 { 4 } // pushed earlier
-            else { 6 }; // Yom HaZikaron pushed to 5, Yom HaAtzmaut → 6
-        
-        if day == yha_actual_day {
-            return Some(Holiday::YomHaAtzmaut);
-        }
-        
+
         // --- Yom Yerushalayim: Iyar 28 ---
-        if day == 28 {
+        if date.day == 28 {
             return Some(Holiday::YomYerushalayim);
         }
-        
+
         None
     }
-    
-    /// Count days from Tishrei 1 to Nisan 1 for a given Hebrew year.
-    fn days_from_tishrei_to_nisan(year: i32) -> u16 {
-        let is_leap = DateConverter::is_hebrew_leap_year(year);
-        let months = if is_leap { 6 } else { 5 }; // Tishrei..Adar (or AdarII)
-        let mut days: u16 = 0;
-        for m in 7..(7 + months) {
-            days += DateConverter::days_in_hebrew_month(year, m as u8) as u16;
-        }
-        days
-    }
-    
-    /// Add `days` to a day-of-week (0=Sun), returning (dow + days) % 7.
-    fn add_days_to_dow(dow: u8, days: i32) -> u8 {
-        ((dow as i32 + days).rem_euclid(7)) as u8
+
+    /// Iyar day for Yom HaZikaron (hebcal `dateYomHaZikaron`).
+    ///
+    /// Derived from Pesach's day of week; Atzmaut is the following day.
+    fn yom_hazikaron_day(year: i32) -> Option<u8> {
+        let pesach = HebrewDate::new(year, HebrewMonth::Nisan, 15);
+        let pdow = pesach.day_of_week(); // 0=Sun … 6=Sat
+        let day = if pdow == 0 {
+            2 // Pesach Sunday → Iyar 2
+        } else if pdow == 6 {
+            3 // Pesach Saturday → Iyar 3
+        } else if year < 5764 {
+            4 // pre-2004 rules
+        } else if pdow == 2 {
+            5 // Pesach Tuesday → Iyar 4 is Sunday → push to Monday
+        } else {
+            4
+        };
+        Some(day)
     }
     
     /// True if `date` is Rosh Chodesh.
@@ -698,7 +721,20 @@ mod tests {
 
     #[test]
     fn test_taanit_esther() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Adar, 13);
+        // 5784: Pesach was Tuesday → Adar 13 was Shabbat → fast on Thursday Adar 11
+        let pushed = HebrewDate::new(5784, HebrewMonth::Adar, 11);
+        let holidays = HolidayCalculator::get_holidays(&pushed).unwrap();
+        assert!(holidays.contains(&Holiday::TaanitEsther));
+        let shabbat = HebrewDate::new(5784, HebrewMonth::Adar, 13);
+        assert_eq!(shabbat.day_of_week(), 6);
+        assert!(!HolidayCalculator::get_holidays(&shabbat).unwrap().contains(&Holiday::TaanitEsther));
+    }
+
+    #[test]
+    fn test_taanit_esther_normal_5783() {
+        // 5783: Adar 13 was not Shabbat → fast on 13
+        let hebrew = HebrewDate::new(5783, HebrewMonth::Adar, 13);
+        assert_ne!(hebrew.day_of_week(), 6);
         let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
         assert!(holidays.contains(&Holiday::TaanitEsther));
     }
@@ -803,28 +839,93 @@ mod tests {
     // === Modern Israeli holidays ===
 
     #[test]
-    fn test_yom_haatzmaut_5784() {
-        // 5784: Yom HaAtzmaut should be on Iyar 6
-        // (Iyar 4 was Friday → pushed to 5, so Yom HaAtzmaut → 6)
-        let date = HebrewDate::new(5784, HebrewMonth::Iyar, 6);
+    fn test_yom_hashoah_nisan_5783() {
+        // 5783: Nisan 27 was Tuesday → no push
+        let date = HebrewDate::new(5783, HebrewMonth::Nisan, 27);
         let holidays = HolidayCalculator::get_holidays(&date).unwrap();
-        assert!(holidays.contains(&Holiday::YomHaAtzmaut),
-            "5784 Iyar 6 should be Yom HaAtzmaut");
+        assert!(holidays.contains(&Holiday::YomHaShoah));
     }
 
     #[test]
-    fn test_modern_israeli_holidays_exist() {
-        // 5783 (2023): Yom HaShoah → Iyar 27 (Thursday, no move),
-        // Yom HaZikaron → Iyar 4 (Tuesday, no move), Yom HaAtzmaut → Iyar 5 (Wednesday)
-        let shoah = HebrewDate::new(5783, HebrewMonth::Iyar, 27);
-        let h = HolidayCalculator::get_holidays(&shoah).unwrap();
-        assert!(h.iter().any(|hol| matches!(hol, Holiday::YomHaShoah)),
-            "5783 Iyar 27 should be Yom HaShoah");
+    fn test_yom_hashoah_pushed_sunday_5784() {
+        // 5784: Nisan 27 was Sunday → observed Monday Nisan 28
+        let date = HebrewDate::new(5784, HebrewMonth::Nisan, 28);
+        let holidays = HolidayCalculator::get_holidays(&date).unwrap();
+        assert!(holidays.contains(&Holiday::YomHaShoah));
+        let wrong = HolidayCalculator::get_holidays(
+            &HebrewDate::new(5784, HebrewMonth::Nisan, 27),
+        ).unwrap();
+        assert!(!wrong.contains(&Holiday::YomHaShoah));
+        let iyar = HolidayCalculator::get_holidays(
+            &HebrewDate::new(5784, HebrewMonth::Iyar, 27),
+        ).unwrap();
+        assert!(!iyar.contains(&Holiday::YomHaShoah));
+    }
 
+    #[test]
+    fn test_yom_hashoah_pushed_friday_5785() {
+        // 5785: Nisan 27 Friday → observed Thursday Nisan 26
+        let date = HebrewDate::new(5785, HebrewMonth::Nisan, 26);
+        let holidays = HolidayCalculator::get_holidays(&date).unwrap();
+        assert!(holidays.contains(&Holiday::YomHaShoah));
+    }
+
+    #[test]
+    fn test_yom_haatzmaut_5784() {
+        // 5784: Pesach Tuesday → Zikaron Iyar 5, Atzmaut Iyar 6
+        let z = HebrewDate::new(5784, HebrewMonth::Iyar, 5);
+        let a = HebrewDate::new(5784, HebrewMonth::Iyar, 6);
+        assert!(HolidayCalculator::get_holidays(&z).unwrap().contains(&Holiday::YomHaZikaron));
+        assert!(HolidayCalculator::get_holidays(&a).unwrap().contains(&Holiday::YomHaAtzmaut));
+    }
+
+    #[test]
+    fn test_modern_israeli_holidays_5783() {
+        let shoah = HebrewDate::new(5783, HebrewMonth::Nisan, 27);
+        assert!(HolidayCalculator::get_holidays(&shoah).unwrap().contains(&Holiday::YomHaShoah));
+
+        let zikaron = HebrewDate::new(5783, HebrewMonth::Iyar, 4);
         let atzmaut = HebrewDate::new(5783, HebrewMonth::Iyar, 5);
-        let h = HolidayCalculator::get_holidays(&atzmaut).unwrap();
-        assert!(h.iter().any(|hol| matches!(hol, Holiday::YomHaAtzmaut)),
-            "5783 Iyar 5 should be Yom HaAtzmaut");
+        assert!(HolidayCalculator::get_holidays(&zikaron).unwrap().contains(&Holiday::YomHaZikaron));
+        assert!(HolidayCalculator::get_holidays(&atzmaut).unwrap().contains(&Holiday::YomHaAtzmaut));
+    }
+
+    #[test]
+    fn test_yom_hazikaron_5782_advanced() {
+        // 5782: Zikaron Iyar 3, Atzmaut Iyar 4 (advanced from Fri/Sat conflict)
+        let z = HebrewDate::new(5782, HebrewMonth::Iyar, 3);
+        let a = HebrewDate::new(5782, HebrewMonth::Iyar, 4);
+        assert!(HolidayCalculator::get_holidays(&z).unwrap().contains(&Holiday::YomHaZikaron));
+        assert!(HolidayCalculator::get_holidays(&a).unwrap().contains(&Holiday::YomHaAtzmaut));
+    }
+
+    #[test]
+    fn test_yom_hazikaron_5785_pesach_sunday() {
+        // 5785: Pesach Sunday → Zikaron Iyar 2, Atzmaut Iyar 3
+        let z = HebrewDate::new(5785, HebrewMonth::Iyar, 2);
+        let a = HebrewDate::new(5785, HebrewMonth::Iyar, 3);
+        assert!(HolidayCalculator::get_holidays(&z).unwrap().contains(&Holiday::YomHaZikaron));
+        assert!(HolidayCalculator::get_holidays(&a).unwrap().contains(&Holiday::YomHaAtzmaut));
+    }
+
+    #[test]
+    fn test_tisha_bav_postponed_5782() {
+        // Av 9 5782 was Shabbat → observed Sunday Av 10
+        let av9 = HebrewDate::new(5782, HebrewMonth::Av, 9);
+        let av10 = HebrewDate::new(5782, HebrewMonth::Av, 10);
+        assert_eq!(av9.day_of_week(), 6);
+        assert!(!HolidayCalculator::get_holidays(&av9).unwrap().contains(&Holiday::TishaBAv));
+        assert!(HolidayCalculator::get_holidays(&av10).unwrap().contains(&Holiday::TishaBAv));
+    }
+
+    #[test]
+    fn test_tzom_gedaliah_when_pushed() {
+        // 5774: RH Thursday → Tishrei 3 Shabbat → Tzom on Tishrei 4
+        let h3 = HebrewDate::new(5774, HebrewMonth::Tishrei, 3);
+        let h4 = HebrewDate::new(5774, HebrewMonth::Tishrei, 4);
+        assert_eq!(h3.day_of_week(), 6);
+        assert!(!HolidayCalculator::get_holidays(&h3).unwrap().contains(&Holiday::TzomGedaliah));
+        assert!(HolidayCalculator::get_holidays(&h4).unwrap().contains(&Holiday::TzomGedaliah));
     }
 
     // === Omer boundaries ===
