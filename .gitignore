@@ -1,3 +1,6 @@
+# Build output
+/target/
+
 # Tauri
 /src-tauri/target/
 /dist/

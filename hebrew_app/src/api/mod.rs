@@ -228,25 +228,57 @@ async fn upcoming_holidays(
     Query(params): Query<HolidaysRequest>,
 ) -> Result<Json<Vec<HolidayInfo>>, ApiError> {
     use chrono::NaiveDate;
-    use hebrew_core::calendar::{DateConverter, HebrewDate, HebrewMonth};
-    use hebrew_core::holidays::{Holiday, HolidayCalculator};
-    
-    let year = params.year.unwrap_or_else(|| {
-        chrono::Local::now().year()
-    });
+    use hebrew_core::calendar::DateConverter;
+    use hebrew_core::holidays::HolidayCalculator;
+
+    let year = params.year.unwrap_or_else(|| chrono::Local::now().year());
     
     let mut holidays = Vec::new();
     
-    // Get holidays for the entire Hebrew year
-    // Find Rosh Hashanah of the Gregorian year
-    let rosh_hashanah_gregorian = if year >= 1 {
-        NaiveDate::from_ymd_opt(year, 9, 1).unwrap() // Approximate
-    } else {
-        NaiveDate::from_ymd_opt(0, 9, 1).unwrap()
-    };
+    // Find Rosh Hashanah: iterate through Hebrew year to find all holidays
+    // Start from Tishrei of the Hebrew year that contains the Gregorian year
+    let rh_approx = NaiveDate::from_ymd_opt(year, 9, 1)
+        .unwrap_or(NaiveDate::from_ymd_opt(2024, 9, 1).unwrap());
+    let hebrew_rh = DateConverter::gregorian_to_hebrew(rh_approx).map_err(ApiError::from)?;
+    let hebrew_year = hebrew_rh.year;
     
-    // This is a simplified implementation
-    // A full implementation would iterate through the Hebrew year
+    // Iterate through the entire Hebrew year, collecting holidays
+    let rh = hebrew_core::calendar::HebrewDate::new(
+        hebrew_year,
+        hebrew_core::calendar::HebrewMonth::Tishrei,
+        1,
+    );
+    let rh_greg = DateConverter::hebrew_to_gregorian(rh).map_err(ApiError::from)?;
+
+    let next_rh = hebrew_core::calendar::HebrewDate::new(
+        hebrew_year + 1,
+        hebrew_core::calendar::HebrewMonth::Tishrei,
+        1,
+    );
+    let next_rh_greg = DateConverter::hebrew_to_gregorian(next_rh).map_err(ApiError::from)?;
+    
+    let days_in_year = (next_rh_greg - rh_greg).num_days();
+    let mut current = rh_greg;
+    
+    for _day in 0..=days_in_year {
+        let hebrew = DateConverter::gregorian_to_hebrew(current).map_err(ApiError::from)?;
+        let day_holidays = HolidayCalculator::get_holidays(&hebrew).map_err(ApiError::from)?;
+        
+        for h in day_holidays {
+            // Skip Omer days for the list view (too many)
+            if matches!(h, hebrew_core::holidays::Holiday::OmerDay(_)) {
+                continue;
+            }
+            holidays.push(HolidayInfo {
+                name: h.name(),
+                hebrew_date: hebrew.format(),
+                gregorian_date: current.to_string(),
+                is_yom_tov: h.is_yom_tov(),
+            });
+        }
+        
+        current = current.succ_opt().unwrap();
+    }
     
     Ok(Json(holidays))
 }

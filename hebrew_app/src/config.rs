@@ -97,11 +97,13 @@ impl AppConfig {
     }
     
     /// Update the default location
+    #[allow(dead_code)]
     pub fn set_location(&mut self, location: GeoLocation) {
         self.default_location = location;
     }
     
     /// Update candle lighting offset
+    #[allow(dead_code)]
     pub fn set_candle_offset(&mut self, minutes: i64) {
         self.candle_lighting_offset_minutes = minutes;
     }

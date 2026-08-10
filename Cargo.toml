@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["hebrew_core", "hebrew_app", "src-tauri"]
+members = ["hebrew_core", "hebrew_app"]
 
 [profile.release]
 opt-level = "z"     # Optimize for size
