@@ -5,9 +5,18 @@
 /src-tauri/target/
 /dist/
 
-# Ralph logs (not code)
-.ralph/logs/
-.ralph/state.json
+# Ralph leftovers (not product code)
+.ralph/
 
 # OS
 .DS_Store
+
+# GH_Audit hygiene
+.DS_Store
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+target/
+dist/
