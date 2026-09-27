@@ -23,8 +23,8 @@ fn cycle14(offset: u32) -> NaiveDate {
 }
 
 fn check(date: NaiveDate, tractate: Tractate, daf: u32, cycle: u32) {
-    let got = DafYomiCalculator::for_date(date)
-        .unwrap_or_else(|e| panic!("for_date({}): {}", date, e));
+    let got =
+        DafYomiCalculator::for_date(date).unwrap_or_else(|e| panic!("for_date({}): {}", date, e));
     assert_eq!(
         (got.tractate, got.daf, got.cycle_number),
         (tractate, daf, cycle),
@@ -55,7 +55,11 @@ fn daf_yomi_before_the_epoch_is_out_of_range() {
         let got = DafYomiCalculator::for_date(date);
         match got {
             Err(CalendarError::DateOutOfRange(msg)) => {
-                assert!(msg.contains("1923"), "message should name the epoch: {}", msg);
+                assert!(
+                    msg.contains("1923"),
+                    "message should name the epoch: {}",
+                    msg
+                );
             }
             other => panic!("expected DateOutOfRange for {}, got {:?}", date, other),
         }
@@ -97,7 +101,14 @@ fn daf_yomi_walk_is_contiguous_and_in_order() {
     // repeated day — the property that makes the shared Kodashim numbering safe.
     let dapim = DafYomiCalculator::cycle_dapim(14);
     assert_eq!(dapim.len(), CYCLE_DAPIM_VILNA as usize);
-    assert_eq!(dapim[0], DafYomi { tractate: Berachos, daf: 2, cycle_number: 14 });
+    assert_eq!(
+        dapim[0],
+        DafYomi {
+            tractate: Berachos,
+            daf: 2,
+            cycle_number: 14
+        }
+    );
     assert_eq!(dapim[dapim.len() - 1].tractate, Nidah);
     assert_eq!(dapim[dapim.len() - 1].daf, 73);
 
@@ -112,9 +123,18 @@ fn daf_yomi_walk_is_contiguous_and_in_order() {
         }
         if let Some((pi, pdaf)) = prev {
             if pi == i {
-                assert_eq!(entry.daf, pdaf + 1, "daf not consecutive in {}", entry.tractate);
+                assert_eq!(
+                    entry.daf,
+                    pdaf + 1,
+                    "daf not consecutive in {}",
+                    entry.tractate
+                );
             } else {
-                assert_eq!(entry.daf, entry.tractate.first_daf(), "maseches did not open at its first daf");
+                assert_eq!(
+                    entry.daf,
+                    entry.tractate.first_daf(),
+                    "maseches did not open at its first daf"
+                );
             }
         }
         assert!((entry.tractate.first_daf()..=entry.tractate.last_daf()).contains(&entry.daf));
@@ -159,12 +179,12 @@ fn daf_yomi_kodashim_share_one_continuous_numbering() {
 fn daf_yomi_cycle_starts_match_published_boundaries() {
     // First day of each cycle, as published by the cycle owner and by Wikipedia.
     let starts: [(u32, (i32, u32, u32)); 6] = [
-        (1, (1923, 9, 11)),   // 1 Rosh Hashanah 5684
-        (7, (1968, 1, 30)),   // epoch + 6 x 2702
-        (12, (2005, 3, 2)),   // dafyomi.co.il, 12th-cycle table
-        (13, (2012, 8, 3)),   // dafyomi.co.il, 13th-cycle table
-        (14, (2020, 1, 5)),   // dafyomi.co.il, 14th-cycle table
-        (15, (2027, 6, 8)),   // the day after cycle 14's last daf
+        (1, (1923, 9, 11)), // 1 Rosh Hashanah 5684
+        (7, (1968, 1, 30)), // epoch + 6 x 2702
+        (12, (2005, 3, 2)), // dafyomi.co.il, 12th-cycle table
+        (13, (2012, 8, 3)), // dafyomi.co.il, 13th-cycle table
+        (14, (2020, 1, 5)), // dafyomi.co.il, 14th-cycle table
+        (15, (2027, 6, 8)), // the day after cycle 14's last daf
     ];
     for (cycle, (y, m, dd)) in starts {
         assert_eq!(
@@ -203,9 +223,11 @@ fn daf_yomi_cycle_ends_match_published_siyum_dates() {
     // month later and is deliberately not what `cycle_end` reports.
     assert_eq!(DafYomiCalculator::cycle_end(14), Some(d(2027, 6, 7)));
     check(d(2027, 6, 7), Nidah, 73, 14);
-    // known: 2711-step is 6 days early for cycles 8-9 — the published 8th and
-    // 9th siyums (1982-11-21, 1990-04-24) are six days after this model's, so
-    // no cycle-8 or cycle-9 end is asserted here. The drift is gone by cycle 12.
+    // Cycles 8 and 9 end where Hebcal ends them too.
+    assert_eq!(DafYomiCalculator::cycle_end(8), Some(d(1982, 11, 24)));
+    assert_eq!(DafYomiCalculator::cycle_end(9), Some(d(1990, 4, 27)));
+    check(d(1982, 11, 25), Berachos, 2, 9);
+    check(d(1990, 4, 28), Berachos, 2, 10);
 }
 
 #[test]
@@ -274,18 +296,18 @@ fn daf_yomi_cycle_fourteen_matches_the_published_schedule() {
     // Rows lifted from dafyomi.co.il's 14th-cycle table, spread across the cycle
     // and covering every tractate boundary the walk crosses.
     let rows: [(i32, u32, u32, Tractate, u32); 16] = [
-        (2020, 1, 5, Berachos, 2),        // cycle start
-        (2020, 8, 10, Shabbos, 157),      // end of Shabbos
+        (2020, 1, 5, Berachos, 2),   // cycle start
+        (2020, 8, 10, Shabbos, 157), // end of Shabbos
         (2020, 8, 11, Eruvin, 2),
-        (2020, 11, 22, Eruvin, 105),      // Eruvin's last daf
+        (2020, 11, 22, Eruvin, 105), // Eruvin's last daf
         (2020, 11, 23, Pesachim, 2),
         (2021, 3, 13, Pesachim, 112),
         (2021, 3, 21, Pesachim, 120),
-        (2021, 3, 22, Pesachim, 121),     // Pesachim runs to 121
+        (2021, 3, 22, Pesachim, 121), // Pesachim runs to 121
         (2021, 4, 13, Yoma, 2),
         (2024, 6, 26, BavaMetzia, 119),
         (2024, 6, 27, BavaBasra, 2),
-        (2024, 12, 18, BavaBasra, 176),   // Bava Basra runs to 176
+        (2024, 12, 18, BavaBasra, 176), // Bava Basra runs to 176
         (2025, 4, 9, Sanhedrin, 113),
         (2025, 4, 10, Makos, 2),
         (2025, 5, 2, Makos, 24),
@@ -350,7 +372,9 @@ fn daf_yomi_repeats_the_same_walk_every_cycle() {
         assert_eq!(c13[i].tractate, c14[i].tractate);
         assert_eq!(c13[i].daf, c14[i].daf);
         assert_eq!(
-            DafYomiCalculator::for_date(cycle14(i as u32)).unwrap().tractate,
+            DafYomiCalculator::for_date(cycle14(i as u32))
+                .unwrap()
+                .tractate,
             c14[i].tractate
         );
     }
@@ -368,9 +392,16 @@ fn daf_yomi_repeats_the_same_walk_every_cycle() {
     assert_eq!(Tractate::RoshHashanah.name(), "Rosh Hashanah");
     assert_eq!(Tractate::MoedKatan.to_string(), "Moed Katan");
     assert_eq!(Meilah.to_string(), "Me'ilah");
-    assert_eq!(DafYomi { tractate: Berachos, daf: 2, cycle_number: 14 }.to_string(), "Berachos 2");
+    assert_eq!(
+        DafYomi {
+            tractate: Berachos,
+            daf: 2,
+            cycle_number: 14
+        }
+        .to_string(),
+        "Berachos 2"
+    );
     assert_eq!(Tractate::all().len(), 40);
     assert_eq!(Tractate::all()[0], Berachos);
     assert_eq!(Tractate::all()[39], Nidah);
 }
-

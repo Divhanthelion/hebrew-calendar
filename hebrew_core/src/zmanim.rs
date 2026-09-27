@@ -1,545 +1,453 @@
-//! Zmanim (Halachic Times) Calculation Module
-//! 
-//! Implements astronomical calculations for sunrise, sunset, and other halachic times.
-//! Uses NOAA algorithms for solar position calculations.
+//! Zmanim: halachic times of day.
+//!
+//! The sun's position comes from NOAA's solar equations, solved twice so the
+//! position is taken at the moment of the event rather than at noon. Times
+//! are computed as instants and shown in the location's own time zone (an
+//! IANA name such as `America/New_York`), so daylight saving time is applied
+//! on the dates it is in force.
+//!
+//! Conventions match Hebcal's defaults: sunrise and sunset at sea level
+//! (0.833° below the horizon) unless an elevation is given; dawn (alot
+//! hashachar) at 16.1°; misheyakir at 11.5°; nightfall (tzeit) at 8.5°;
+//! proportional hours from sunrise to sunset (GRA) or from 72 minutes before
+//! sunrise to 72 minutes after sunset (Magen Avraham).
 
-use chrono::{Duration, NaiveDate, NaiveTime};
+use chrono::{DateTime, Duration, NaiveDate, Offset, TimeZone, Utc};
+use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 
+use crate::calendar::DateConverter;
 use crate::CalendarError;
 
-/// Geographic location for zmanim calculations
+/// Where zmanim are calculated for.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GeoLocation {
     pub latitude: f64,
     pub longitude: f64,
+    /// Metres above sea level. Only sunrise and sunset use it (the sun is
+    /// seen earlier from a height); zero gives sea-level times.
     pub elevation_meters: f64,
-    pub timezone_offset_minutes: i32,
+    /// IANA time zone name, e.g. `Asia/Jerusalem`.
+    pub timezone: String,
     pub location_name: Option<String>,
 }
 
 impl GeoLocation {
+    /// A location in UTC at sea level; set the zone with [`Self::with_timezone`].
     pub fn new(latitude: f64, longitude: f64) -> Result<Self, CalendarError> {
-        if latitude < -90.0 || latitude > 90.0 {
+        if !(-90.0..=90.0).contains(&latitude) {
             return Err(CalendarError::InvalidLatitude(latitude));
         }
-        if longitude < -180.0 || longitude > 180.0 {
+        if !(-180.0..=180.0).contains(&longitude) {
             return Err(CalendarError::InvalidLongitude(longitude));
         }
-        
         Ok(Self {
             latitude,
             longitude,
             elevation_meters: 0.0,
-            timezone_offset_minutes: 0,
+            timezone: "UTC".to_string(),
             location_name: None,
         })
     }
-    
-    pub fn with_elevation(mut self, elevation: f64) -> Self {
-        self.elevation_meters = elevation;
+
+    pub fn with_elevation(mut self, elevation_meters: f64) -> Self {
+        self.elevation_meters = elevation_meters.max(0.0);
         self
     }
-    
-    pub fn with_timezone(mut self, offset_minutes: i32) -> Self {
-        self.timezone_offset_minutes = offset_minutes;
-        self
+
+    /// Set the time zone by IANA name.
+    pub fn with_timezone(mut self, timezone: &str) -> Result<Self, CalendarError> {
+        parse_timezone(timezone)?;
+        self.timezone = timezone.to_string();
+        Ok(self)
     }
-    
+
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.location_name = Some(name.into());
         self
     }
-    
-    /// Create a location for Jerusalem
+
+    /// The time zone.
+    pub fn tz(&self) -> Result<Tz, CalendarError> {
+        parse_timezone(&self.timezone)
+    }
+
+    /// Jerusalem.
     pub fn jerusalem() -> Self {
         Self {
             latitude: 31.7683,
             longitude: 35.2137,
-            elevation_meters: 754.0,
-            timezone_offset_minutes: 120, // UTC+2 (standard), +3 in summer
+            elevation_meters: 0.0,
+            timezone: "Asia/Jerusalem".to_string(),
             location_name: Some("Jerusalem".to_string()),
         }
     }
-    
-    /// Create a location for New York
+
+    /// New York.
     pub fn new_york() -> Self {
         Self {
             latitude: 40.7128,
             longitude: -74.0060,
-            elevation_meters: 10.0,
-            timezone_offset_minutes: -300, // UTC-5 (EST)
+            elevation_meters: 0.0,
+            timezone: "America/New_York".to_string(),
             location_name: Some("New York".to_string()),
         }
     }
 }
 
-/// Zmanim for a specific day
+fn parse_timezone(name: &str) -> Result<Tz, CalendarError> {
+    name.parse::<Tz>()
+        .map_err(|_| CalendarError::InvalidTimezone(name.to_string()))
+}
+
+/// Zmanim for one day, as local clock times ("HH:MM"). A time is `None`
+/// when the sun does not reach that angle that day (far north or south).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Zmanim {
     pub date: String,
     pub location: GeoLocation,
-    pub alot_hashachar: Option<String>,    // Dawn (16.1° below horizon)
-    pub misheyakir: Option<String>,        // Earliest tallit (11.5° below horizon)
-    pub sunrise: Option<String>,           // Netz
-    pub sof_zman_shema_mga: Option<String>, // Latest shema (Magen Avraham)
-    pub sof_zman_shema_gra: Option<String>, // Latest shema (Gra)
-    pub sof_zman_tefila_mga: Option<String>, // Latest shacharit (Magen Avraham)
-    pub sof_zman_tefila_gra: Option<String>, // Latest shacharit (Gra)
-    pub chatzot: Option<String>,           // Midday
-    pub mincha_gedola: Option<String>,     // Earliest mincha
-    pub mincha_ketana: Option<String>,     // Preferred mincha
-    pub plag_hamincha: Option<String>,     // Plag
-    pub sunset: Option<String>,            // Shkiah
-    pub tzeit_hakochavim: Option<String>, // Nightfall (8.5° below horizon)
-    pub tzeit_72_min: Option<String>,      // 72 minutes after sunset
+    /// The zone's UTC offset that day, e.g. "+03:00".
+    pub utc_offset: String,
+    /// Dawn: sun 16.1° below the horizon.
+    pub alot_hashachar: Option<String>,
+    /// Earliest tallit and tefillin: 11.5°.
+    pub misheyakir: Option<String>,
+    pub sunrise: Option<String>,
+    pub sof_zman_shema_mga: Option<String>,
+    pub sof_zman_shema_gra: Option<String>,
+    pub sof_zman_tefila_mga: Option<String>,
+    pub sof_zman_tefila_gra: Option<String>,
+    /// Midday: halfway between sunrise and sunset.
+    pub chatzot: Option<String>,
+    pub mincha_gedola: Option<String>,
+    pub mincha_ketana: Option<String>,
+    pub plag_hamincha: Option<String>,
+    pub sunset: Option<String>,
+    /// Nightfall: 8.5°.
+    pub tzeit_hakochavim: Option<String>,
+    /// 72 minutes after sunset.
+    pub tzeit_72_min: Option<String>,
 }
 
-/// Zmanim calculator
+/// Solar angles below the horizon, in degrees.
+const SUNRISE_SUNSET: f64 = 0.833;
+const ALOT: f64 = 16.1;
+const MISHEYAKIR: f64 = 11.5;
+const TZEIT: f64 = 8.5;
+
+/// Zmanim calculator for one location.
 pub struct ZmanimCalculator {
     location: GeoLocation,
 }
 
 impl ZmanimCalculator {
-    /// Create a new calculator for a location
     pub fn new(location: GeoLocation) -> Self {
         Self { location }
     }
-    
-    /// Calculate all zmanim for a date
+
+    /// All zmanim for `date` (a civil date in the location's zone).
     pub fn calculate(&self, date: NaiveDate) -> Result<Zmanim, CalendarError> {
-        let times = self.calculate_times(date)?;
-        
+        let tz = self.location.tz()?;
+        let show = |t: Option<DateTime<Utc>>| t.map(|t| clock(t, &tz));
+        let sunrise = self.sunrise(date);
+        let sunset = self.sunset(date);
+        let hours = |start: DateTime<Utc>, end: DateTime<Utc>, h: f64| {
+            let span = (end - start).num_milliseconds() as f64;
+            start + Duration::milliseconds((span * h / 12.0) as i64)
+        };
+        let gra = |h: f64| sunrise.zip(sunset).map(|(r, s)| hours(r, s, h));
+        let mga = |h: f64| {
+            sunrise
+                .zip(sunset)
+                .map(|(r, s)| hours(r - Duration::minutes(72), s + Duration::minutes(72), h))
+        };
         Ok(Zmanim {
             date: date.to_string(),
             location: self.location.clone(),
-            alot_hashachar: times.alot.map(|t| t.format("%H:%M").to_string()),
-            misheyakir: times.misheyakir.map(|t| t.format("%H:%M").to_string()),
-            sunrise: times.sunrise.map(|t| t.format("%H:%M").to_string()),
-            sof_zman_shema_mga: times.sof_shema_mga.map(|t| t.format("%H:%M").to_string()),
-            sof_zman_shema_gra: times.sof_shema_gra.map(|t| t.format("%H:%M").to_string()),
-            sof_zman_tefila_mga: times.sof_tefila_mga.map(|t| t.format("%H:%M").to_string()),
-            sof_zman_tefila_gra: times.sof_tefila_gra.map(|t| t.format("%H:%M").to_string()),
-            chatzot: times.chatzot.map(|t| t.format("%H:%M").to_string()),
-            mincha_gedola: times.mincha_gedola.map(|t| t.format("%H:%M").to_string()),
-            mincha_ketana: times.mincha_ketana.map(|t| t.format("%H:%M").to_string()),
-            plag_hamincha: times.plag.map(|t| t.format("%H:%M").to_string()),
-            sunset: times.sunset.map(|t| t.format("%H:%M").to_string()),
-            tzeit_hakochavim: times.tzeit.map(|t| t.format("%H:%M").to_string()),
-            tzeit_72_min: times.tzeit_72.map(|t| t.format("%H:%M").to_string()),
+            utc_offset: utc_offset(date, &tz),
+            alot_hashachar: show(self.event(date, ALOT, true)),
+            misheyakir: show(self.event(date, MISHEYAKIR, true)),
+            sunrise: show(sunrise),
+            sof_zman_shema_mga: show(mga(3.0)),
+            sof_zman_shema_gra: show(gra(3.0)),
+            sof_zman_tefila_mga: show(mga(4.0)),
+            sof_zman_tefila_gra: show(gra(4.0)),
+            chatzot: show(gra(6.0)),
+            mincha_gedola: show(gra(6.5)),
+            mincha_ketana: show(gra(9.5)),
+            plag_hamincha: show(gra(10.75)),
+            sunset: show(sunset),
+            tzeit_hakochavim: show(self.event(date, TZEIT, false)),
+            tzeit_72_min: show(sunset.map(|s| s + Duration::minutes(72))),
         })
     }
-    
-    /// Calculate candle lighting time
+
+    /// Candle lighting: `minutes` before sunset on `date`.
     pub fn candle_lighting(
         &self,
-        zmanim: &Zmanim,
-        offset_minutes: i64,
-    ) -> Result<Option<String>, CalendarError> {
-        let sunset_str = match &zmanim.sunset {
-            Some(s) => s,
-            None => return Ok(None),
-        };
-        
-        let sunset_time = NaiveTime::parse_from_str(sunset_str, "%H:%M")
-            .map_err(|e| CalendarError::CalculationError(e.to_string()))?;
-        
-        let candle_time = sunset_time - Duration::minutes(offset_minutes);
-        
-        Ok(Some(candle_time.format("%H:%M").to_string()))
-    }
-    
-    /// Calculate specific time for an elevation angle
-    pub fn time_at_elevation(
-        &self,
         date: NaiveDate,
-        elevation: f64,
-        rising: bool,
-    ) -> Result<Option<NaiveTime>, CalendarError> {
-        let rd = crate::calendar::DateConverter::gregorian_to_rd(date);
-        let jd = crate::calendar::DateConverter::rd_to_julian_day(rd) as f64;
-
-        // Calculate solar position
-        let time = self.calculate_solar_time(jd, elevation, rising);
-        
-        Ok(time)
+        minutes: i64,
+    ) -> Result<Option<String>, CalendarError> {
+        let tz = self.location.tz()?;
+        Ok(self
+            .sunset(date)
+            .map(|s| clock(s - Duration::minutes(minutes), &tz)))
     }
-    
-    /// Internal: Calculate all times for a date
-    fn calculate_times(&self, date: NaiveDate) -> Result<CalculatedTimes, CalendarError> {
-        let rd = crate::calendar::DateConverter::gregorian_to_rd(date);
-        let jd = crate::calendar::DateConverter::rd_to_julian_day(rd) as f64;
-        
-        // Calculate sunrise and sunset (0.833° below horizon for refraction)
-        let sunrise = self.calculate_solar_time(jd, -0.833, true);
-        let sunset = self.calculate_solar_time(jd, -0.833, false);
-        
-        // Dawn (16.1° below horizon - Alot Hashachar)
-        let alot = self.calculate_solar_time(jd, -16.1, true);
-        
-        // Misheyakir (11.5° below horizon)
-        let misheyakir = self.calculate_solar_time(jd, -11.5, true);
-        
-        // Tzeit (8.5° below horizon)
-        let tzeit = self.calculate_solar_time(jd, -8.5, false);
-        
-        // Calculate derived times
-        let (sof_shema_gra, sof_shema_mga, sof_tefila_gra, sof_tefila_mga, 
-             chatzot, mincha_gedola, mincha_ketana, plag, tzeit_72) = 
-            if let (Some(sr), Some(ss)) = (sunrise, sunset) {
-                let day_length = ss.signed_duration_since(sr);
-                let _hours = day_length.num_minutes() as f64 / 60.0;
-                
-                // Shaot zmaniyot (proportional hours)
-                let shaah = day_length / 12;
-                
-                // Sof zman shema (3 hours)
-                let sof_shema_gra = sr + shaah * 3;
-                // Magen Avraham uses alot to tzeit (72 min)
-                let alot_72 = sr - Duration::minutes(72);
-                let tzeit_72_calc = ss + Duration::minutes(72);
-                let day_length_mga = tzeit_72_calc.signed_duration_since(alot_72);
-                let shaah_mga = day_length_mga / 12;
-                let sof_shema_mga = alot_72 + shaah_mga * 3;
-                
-                // Sof zman tefila (4 hours)
-                let sof_tefila_gra = sr + shaah * 4;
-                let sof_tefila_mga = alot_72 + shaah_mga * 4;
-                
-                // Chatzot (midday)
-                let chatzot_time = sr + day_length / 2;
-                
-                // Mincha gedola (6.5 hours)
-                let mincha_g = sr + shaah * 6 + shaah / 2;
-                
-                // Mincha ketana (9.5 hours)
-                let mincha_k = sr + shaah * 9 + shaah / 2;
-                
-                // Plag hamincha (10.75 hours)
-                let plag_time = sr + shaah * 10 + (shaah * 3) / 4;
-                
-                (Some(sof_shema_gra), Some(sof_shema_mga), 
-                 Some(sof_tefila_gra), Some(sof_tefila_mga),
-                 Some(chatzot_time), Some(mincha_g), Some(mincha_k), 
-                 Some(plag_time), Some(tzeit_72_calc))
-            } else {
-                (None, None, None, None, None, None, None, None, None)
-            };
-        
-        Ok(CalculatedTimes {
-            alot,
-            misheyakir,
-            sunrise,
-            sof_shema_mga,
-            sof_shema_gra,
-            sof_tefila_mga,
-            sof_tefila_gra,
-            chatzot,
-            mincha_gedola,
-            mincha_ketana,
-            plag,
-            sunset,
-            tzeit,
-            tzeit_72,
-        })
+
+    /// Nightfall (8.5°), when Shabbat and festivals end and a second
+    /// festival night's candles are lit.
+    pub fn nightfall(&self, date: NaiveDate) -> Result<Option<String>, CalendarError> {
+        let tz = self.location.tz()?;
+        Ok(self.event(date, TZEIT, false).map(|t| clock(t, &tz)))
     }
-    
-    /// Calculate solar time for a specific elevation angle
-    /// Uses standard NOAA solar calculator algorithm
-    fn calculate_solar_time(&self, jd: f64, elevation: f64, rising: bool) -> Option<NaiveTime> {
-        let tz = self.location.timezone_offset_minutes as f64 / 60.0;
-        let lat = self.location.latitude;
-        let lng = self.location.longitude;
 
-        // Julian century from J2000.0
-        let jc = (jd - 2451545.0) / 36525.0;
+    /// Sunrise as an instant.
+    pub fn sunrise(&self, date: NaiveDate) -> Option<DateTime<Utc>> {
+        self.event(date, self.horizon(), true)
+    }
 
-        // Geometric mean longitude of the sun (degrees)
-        let gm_long = (280.46646 + jc * (36000.76983 + jc * 0.0003032)) % 360.0;
+    /// Sunset as an instant.
+    pub fn sunset(&self, date: NaiveDate) -> Option<DateTime<Utc>> {
+        self.event(date, self.horizon(), false)
+    }
 
-        // Geometric mean anomaly of the sun (degrees)
-        let gm_anom = 357.52911 + jc * (35999.05029 - 0.0001537 * jc);
-        let gm_anom_rad = gm_anom.to_radians();
+    /// Degrees below the horizon at which the sun's upper edge is seen,
+    /// lowered for an observer above sea level.
+    fn horizon(&self) -> f64 {
+        SUNRISE_SUNSET + 0.0347 * self.location.elevation_meters.max(0.0).sqrt()
+    }
 
-        // Eccentricity of Earth's orbit
-        let ecc = 0.016708634 - jc * (0.000042037 + 0.0000001267 * jc);
+    /// When the sun is `depression` degrees below the horizon on `date`,
+    /// rising or setting, as an instant.
+    pub fn event(&self, date: NaiveDate, depression: f64, rising: bool) -> Option<DateTime<Utc>> {
+        let midnight = Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0)?);
+        // Julian day of 0h UT on `date`.
+        let jd0 =
+            DateConverter::rd_to_julian_day(DateConverter::gregorian_to_rd(date)) as f64 - 0.5;
+        // Start from local noon, then solve again at the event itself.
+        let mut minutes = 720.0 - 4.0 * self.location.longitude;
+        for _ in 0..2 {
+            minutes = self.event_minutes(jd0 + minutes / 1440.0, depression, rising)?;
+        }
+        Some(midnight + Duration::milliseconds((minutes * 60_000.0).round() as i64))
+    }
 
-        // Sun equation of center (degrees)
-        let sun_eq_ctr = gm_anom_rad.sin() * (1.914602 - jc * (0.004817 + 0.000014 * jc))
-            + (2.0 * gm_anom_rad).sin() * (0.019993 - 0.000101 * jc)
-            + (3.0 * gm_anom_rad).sin() * 0.000289;
-
-        // Sun true longitude (degrees)
-        let sun_true_long = gm_long + sun_eq_ctr;
-
-        // Sun apparent longitude (degrees)
-        let omega = 125.04 - 1934.136 * jc;
-        let sun_app_long = sun_true_long - 0.00569 - 0.00478 * omega.to_radians().sin();
-
-        // Mean obliquity of the ecliptic (degrees)
-        let mean_obliq = 23.0 + (26.0 + (21.448 - jc * (46.815 + jc * (0.00059 - jc * 0.001813))) / 60.0) / 60.0;
-
-        // Obliquity correction (degrees)
-        let obliq_corr = mean_obliq + 0.00256 * omega.to_radians().cos();
-        let obliq_corr_rad = obliq_corr.to_radians();
-
-        // Sun declination (radians)
-        let sun_declin = (obliq_corr_rad.sin() * sun_app_long.to_radians().sin()).asin();
-
-        // Equation of time (minutes)
-        let y = (obliq_corr_rad / 2.0).tan().powi(2);
-        let gm_long_rad = gm_long.to_radians();
-        let eq_time = 4.0 * (
-            y * (2.0 * gm_long_rad).sin()
-            - 2.0 * ecc * gm_anom_rad.sin()
-            + 4.0 * ecc * y * gm_anom_rad.sin() * (2.0 * gm_long_rad).cos()
-            - 0.5 * y * y * (4.0 * gm_long_rad).sin()
-            - 1.25 * ecc * ecc * (2.0 * gm_anom_rad).sin()
-        ).to_degrees();
-
-        // Solar noon (minutes from midnight, local time)
-        let solar_noon_min = 720.0 - 4.0 * lng - eq_time + tz * 60.0;
-
-        // Hour angle for the desired elevation
-        let lat_rad = lat.to_radians();
-        let elevation_rad = elevation.to_radians();
-        let cos_hour = (elevation_rad.sin() - lat_rad.sin() * sun_declin.sin())
-            / (lat_rad.cos() * sun_declin.cos());
-
-        // Check if sun reaches this elevation at this latitude
-        if cos_hour < -1.0 || cos_hour > 1.0 {
+    /// Minutes after 0h UT of the event, with the sun's position taken at
+    /// Julian day `jd`.
+    fn event_minutes(&self, jd: f64, depression: f64, rising: bool) -> Option<f64> {
+        let (declination, equation_of_time) = sun_position(jd);
+        let lat = self.location.latitude.to_radians();
+        let cos_hour_angle = ((-depression).to_radians().sin() - lat.sin() * declination.sin())
+            / (lat.cos() * declination.cos());
+        if !(-1.0..=1.0).contains(&cos_hour_angle) {
             return None;
         }
-
-        let hour_angle_deg = cos_hour.acos().to_degrees();
-
-        // Time of event (minutes from midnight)
-        let event_minutes = if rising {
-            solar_noon_min - hour_angle_deg * 4.0
+        let hour_angle = cos_hour_angle.acos().to_degrees();
+        let noon = 720.0 - 4.0 * self.location.longitude - equation_of_time;
+        Some(if rising {
+            noon - 4.0 * hour_angle
         } else {
-            solar_noon_min + hour_angle_deg * 4.0
-        };
-
-        // Convert to hours and minutes, handling wrap-around
-        let total_minutes = event_minutes.round() as i64;
-        let total_minutes = total_minutes.rem_euclid(1440);
-        let hours = (total_minutes / 60) as u32;
-        let minutes = (total_minutes % 60) as u32;
-
-        NaiveTime::from_hms_opt(hours, minutes, 0)
+            noon + 4.0 * hour_angle
+        })
     }
 }
 
-/// Internal structure for calculated times
-struct CalculatedTimes {
-    alot: Option<NaiveTime>,
-    misheyakir: Option<NaiveTime>,
-    sunrise: Option<NaiveTime>,
-    sof_shema_mga: Option<NaiveTime>,
-    sof_shema_gra: Option<NaiveTime>,
-    sof_tefila_mga: Option<NaiveTime>,
-    sof_tefila_gra: Option<NaiveTime>,
-    chatzot: Option<NaiveTime>,
-    mincha_gedola: Option<NaiveTime>,
-    mincha_ketana: Option<NaiveTime>,
-    plag: Option<NaiveTime>,
-    sunset: Option<NaiveTime>,
-    tzeit: Option<NaiveTime>,
-    tzeit_72: Option<NaiveTime>,
+/// The sun's declination (radians) and the equation of time (minutes) at
+/// Julian day `jd`, from NOAA's solar calculator.
+fn sun_position(jd: f64) -> (f64, f64) {
+    let t = (jd - 2451545.0) / 36525.0;
+    let mean_longitude = (280.46646 + t * (36000.76983 + t * 0.0003032)).rem_euclid(360.0);
+    let mean_anomaly = 357.52911 + t * (35999.05029 - 0.0001537 * t);
+    let m = mean_anomaly.to_radians();
+    let eccentricity = 0.016708634 - t * (0.000042037 + 0.0000001267 * t);
+    let center = m.sin() * (1.914602 - t * (0.004817 + 0.000014 * t))
+        + (2.0 * m).sin() * (0.019993 - 0.000101 * t)
+        + (3.0 * m).sin() * 0.000289;
+    let omega = (125.04 - 1934.136 * t).to_radians();
+    let apparent_longitude =
+        (mean_longitude + center - 0.00569 - 0.00478 * omega.sin()).to_radians();
+    let mean_obliquity =
+        23.0 + (26.0 + (21.448 - t * (46.815 + t * (0.00059 - t * 0.001813))) / 60.0) / 60.0;
+    let obliquity = (mean_obliquity + 0.00256 * omega.cos()).to_radians();
+    let declination = (obliquity.sin() * apparent_longitude.sin()).asin();
+    let y = (obliquity / 2.0).tan().powi(2);
+    let l = mean_longitude.to_radians();
+    let equation_of_time = 4.0
+        * (y * (2.0 * l).sin() - 2.0 * eccentricity * m.sin()
+            + 4.0 * eccentricity * y * m.sin() * (2.0 * l).cos()
+            - 0.5 * y * y * (4.0 * l).sin()
+            - 1.25 * eccentricity * eccentricity * (2.0 * m).sin())
+        .to_degrees();
+    (declination, equation_of_time)
+}
+
+/// Local clock time, rounded to the nearest minute.
+fn clock(t: DateTime<Utc>, tz: &Tz) -> String {
+    (t + Duration::seconds(30))
+        .with_timezone(tz)
+        .format("%H:%M")
+        .to_string()
+}
+
+/// The zone's UTC offset at noon on `date`, as "+03:00".
+fn utc_offset(date: NaiveDate, tz: &Tz) -> String {
+    let noon = date.and_hms_opt(12, 0, 0).expect("noon exists");
+    let seconds = tz.offset_from_utc_datetime(&noon).fix().local_minus_utc();
+    let sign = if seconds < 0 { '-' } else { '+' };
+    let seconds = seconds.abs();
+    format!("{sign}{:02}:{:02}", seconds / 3600, seconds % 3600 / 60)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::NaiveDate;
-    
-    #[test]
-    fn test_zmanim_jerusalem() {
-        let loc = GeoLocation::jerusalem();
-        let calc = ZmanimCalculator::new(loc);
-        
-        // Test a specific date
-        let date = NaiveDate::from_ymd_opt(2024, 6, 15).unwrap(); // Summer solstice nearby
-        let zmanim = calc.calculate(date).unwrap();
-        
-        println!("Jerusalem Zmanim for {}:", date);
-        println!("  Sunrise: {:?}", zmanim.sunrise);
-        println!("  Sunset: {:?}", zmanim.sunset);
-        println!("  Alot: {:?}", zmanim.alot_hashachar);
-        println!("  Tzeit: {:?}", zmanim.tzeit_hakochavim);
-        
-        assert!(zmanim.sunrise.is_some());
-        assert!(zmanim.sunset.is_some());
+
+    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
     }
-    
-    #[test]
-    fn test_candle_lighting() {
-        let loc = GeoLocation::new_york();
-        let calc = ZmanimCalculator::new(loc);
-        
-        let date = NaiveDate::from_ymd_opt(2024, 6, 14).unwrap(); // Friday
-        let zmanim = calc.calculate(date).unwrap();
-        let candle = calc.candle_lighting(&zmanim, 18).unwrap();
-        
-        println!("NYC Candle lighting: {:?}", candle);
-        assert!(candle.is_some());
+
+    fn minutes(hhmm: &str) -> i32 {
+        let (h, m) = hhmm.split_once(':').unwrap();
+        h.parse::<i32>().unwrap() * 60 + m.parse::<i32>().unwrap()
     }
-    
+
+    /// Compare with Hebcal's published times (its defaults, sea level), to
+    /// within a minute.
+    fn check(z: &Zmanim, expected: [(&str, &Option<String>); 7]) {
+        for (want, got) in expected {
+            let got = got.as_ref().expect("time exists");
+            assert!(
+                (minutes(got) - minutes(want)).abs() <= 1,
+                "{}: expected {want}, got {got}",
+                z.date
+            );
+        }
+    }
+
     #[test]
-    fn test_geolocation_validation() {
+    fn jerusalem_summer_matches_hebcal_with_daylight_time() {
+        let z = ZmanimCalculator::new(GeoLocation::jerusalem())
+            .calculate(day(2025, 7, 1))
+            .unwrap();
+        assert_eq!(z.utc_offset, "+03:00");
+        check(
+            &z,
+            [
+                ("04:10", &z.alot_hashachar),
+                ("05:37", &z.sunrise),
+                ("08:34", &z.sof_zman_shema_mga),
+                ("09:10", &z.sof_zman_shema_gra),
+                ("12:43", &z.chatzot),
+                ("19:49", &z.sunset),
+                ("20:31", &z.tzeit_hakochavim),
+            ],
+        );
+    }
+
+    #[test]
+    fn jerusalem_winter_matches_hebcal() {
+        let z = ZmanimCalculator::new(GeoLocation::jerusalem())
+            .calculate(day(2025, 1, 1))
+            .unwrap();
+        assert_eq!(z.utc_offset, "+02:00");
+        check(
+            &z,
+            [
+                ("05:22", &z.alot_hashachar),
+                ("06:39", &z.sunrise),
+                ("08:35", &z.sof_zman_shema_mga),
+                ("09:11", &z.sof_zman_shema_gra),
+                ("11:43", &z.chatzot),
+                ("16:47", &z.sunset),
+                ("17:26", &z.tzeit_hakochavim),
+            ],
+        );
+    }
+
+    #[test]
+    fn new_york_both_seasons_match_hebcal() {
+        let calc = ZmanimCalculator::new(GeoLocation::new_york());
+        let z = calc.calculate(day(2025, 7, 1)).unwrap();
+        assert_eq!(z.utc_offset, "-04:00");
+        check(
+            &z,
+            [
+                ("03:41", &z.alot_hashachar),
+                ("05:29", &z.sunrise),
+                ("08:38", &z.sof_zman_shema_mga),
+                ("09:14", &z.sof_zman_shema_gra),
+                ("13:00", &z.chatzot),
+                ("20:31", &z.sunset),
+                ("21:21", &z.tzeit_hakochavim),
+            ],
+        );
+        let z = calc.calculate(day(2025, 12, 15)).unwrap();
+        assert_eq!(z.utc_offset, "-05:00");
+        check(
+            &z,
+            [
+                ("05:45", &z.alot_hashachar),
+                ("07:13", &z.sunrise),
+                ("08:56", &z.sof_zman_shema_mga),
+                ("09:32", &z.sof_zman_shema_gra),
+                ("11:51", &z.chatzot),
+                ("16:30", &z.sunset),
+                ("17:15", &z.tzeit_hakochavim),
+            ],
+        );
+    }
+
+    #[test]
+    fn candle_lighting_is_before_sunset() {
+        let calc = ZmanimCalculator::new(GeoLocation::jerusalem());
+        let sunset = calc.calculate(day(2024, 6, 14)).unwrap().sunset.unwrap();
+        for offset in [18, 40] {
+            let candles = calc
+                .candle_lighting(day(2024, 6, 14), offset)
+                .unwrap()
+                .unwrap();
+            let diff = minutes(&sunset) - minutes(&candles);
+            assert!(
+                (offset as i32 - 1..=offset as i32 + 1).contains(&diff),
+                "{offset}: {diff}"
+            );
+        }
+    }
+
+    #[test]
+    fn elevation_brings_sunrise_earlier_and_sunset_later() {
+        let sea = ZmanimCalculator::new(GeoLocation::jerusalem());
+        let hill = ZmanimCalculator::new(GeoLocation::jerusalem().with_elevation(754.0));
+        let d = day(2025, 3, 20);
+        assert!(hill.sunrise(d).unwrap() < sea.sunrise(d).unwrap());
+        assert!(hill.sunset(d).unwrap() > sea.sunset(d).unwrap());
+    }
+
+    #[test]
+    fn no_sunset_in_the_arctic_summer() {
+        let tromso = GeoLocation::new(69.65, 18.96)
+            .unwrap()
+            .with_timezone("Europe/Oslo")
+            .unwrap();
+        let z = ZmanimCalculator::new(tromso)
+            .calculate(day(2025, 6, 21))
+            .unwrap();
+        assert!(z.sunrise.is_none() && z.sunset.is_none() && z.chatzot.is_none());
+    }
+
+    #[test]
+    fn locations_are_validated() {
         assert!(GeoLocation::new(91.0, 0.0).is_err());
-        assert!(GeoLocation::new(-91.0, 0.0).is_err());
-        assert!(GeoLocation::new(0.0, 181.0).is_err());
         assert!(GeoLocation::new(0.0, -181.0).is_err());
-        assert!(GeoLocation::new(40.7128, -74.0060).is_ok());
-    }
-
-    #[test]
-    fn test_jerusalem_sunrise_summer_solstice() {
-        let loc = GeoLocation::jerusalem();
-        let calc = ZmanimCalculator::new(loc);
-        let date = NaiveDate::from_ymd_opt(2024, 6, 21).unwrap();
-        let zmanim = calc.calculate(date).unwrap();
-        let sunrise = zmanim.sunrise.as_ref().expect("sunrise should exist");
-        let time = NaiveTime::parse_from_str(sunrise, "%H:%M").unwrap();
-        // Jerusalem sunrise ~05:29 IST (UTC+2) on summer solstice
-        // Allow wide tolerance due to timezone/DST differences
-        let earliest = NaiveTime::from_hms_opt(3, 0, 0).unwrap();
-        let latest = NaiveTime::from_hms_opt(8, 0, 0).unwrap();
-        assert!(time >= earliest && time <= latest,
-            "Jerusalem sunrise {} should be between 03:00 and 08:00", sunrise);
-    }
-
-    #[test]
-    fn test_jerusalem_sunset_summer_solstice() {
-        let loc = GeoLocation::jerusalem();
-        let calc = ZmanimCalculator::new(loc);
-        let date = NaiveDate::from_ymd_opt(2024, 6, 21).unwrap();
-        let zmanim = calc.calculate(date).unwrap();
-        let sunset = zmanim.sunset.as_ref().expect("sunset should exist");
-        let time = NaiveTime::parse_from_str(sunset, "%H:%M").unwrap();
-        let earliest = NaiveTime::from_hms_opt(15, 0, 0).unwrap();
-        let latest = NaiveTime::from_hms_opt(21, 0, 0).unwrap();
-        assert!(time >= earliest && time <= latest,
-            "Jerusalem sunset {} should be between 15:00 and 21:00", sunset);
-    }
-
-    #[test]
-    fn test_new_york_zmanim_equinox() {
-        let loc = GeoLocation::new_york();
-        let calc = ZmanimCalculator::new(loc);
-        let date = NaiveDate::from_ymd_opt(2024, 3, 20).unwrap();
-        let zmanim = calc.calculate(date).unwrap();
-        assert!(zmanim.sunrise.is_some(), "NYC equinox should have sunrise");
-        assert!(zmanim.sunset.is_some(), "NYC equinox should have sunset");
-    }
-
-    #[test]
-    fn test_candle_lighting_18_min() {
-        let loc = GeoLocation::jerusalem();
-        let calc = ZmanimCalculator::new(loc);
-        let date = NaiveDate::from_ymd_opt(2024, 6, 14).unwrap();
-        let zmanim = calc.calculate(date).unwrap();
-        let candle = calc.candle_lighting(&zmanim, 18).unwrap();
-        assert!(candle.is_some());
-        // Candle should be 18 min before sunset
-        let sunset = NaiveTime::parse_from_str(zmanim.sunset.as_ref().unwrap(), "%H:%M").unwrap();
-        let candle_time = NaiveTime::parse_from_str(candle.as_ref().unwrap(), "%H:%M").unwrap();
-        let diff = sunset.signed_duration_since(candle_time).num_minutes();
-        assert_eq!(diff, 18, "Candle lighting should be 18 minutes before sunset");
-    }
-
-    #[test]
-    fn test_candle_lighting_40_min() {
-        let loc = GeoLocation::jerusalem();
-        let calc = ZmanimCalculator::new(loc);
-        let date = NaiveDate::from_ymd_opt(2024, 6, 14).unwrap();
-        let zmanim = calc.calculate(date).unwrap();
-        let candle = calc.candle_lighting(&zmanim, 40).unwrap();
-        assert!(candle.is_some());
-        let sunset = NaiveTime::parse_from_str(zmanim.sunset.as_ref().unwrap(), "%H:%M").unwrap();
-        let candle_time = NaiveTime::parse_from_str(candle.as_ref().unwrap(), "%H:%M").unwrap();
-        let diff = sunset.signed_duration_since(candle_time).num_minutes();
-        assert_eq!(diff, 40, "Candle lighting should be 40 minutes before sunset");
-    }
-
-    #[test]
-    fn test_candle_lighting_no_sunset() {
-        let zmanim = Zmanim {
-            date: "2024-06-21".to_string(),
-            location: GeoLocation::jerusalem(),
-            alot_hashachar: None,
-            misheyakir: None,
-            sunrise: None,
-            sof_zman_shema_mga: None,
-            sof_zman_shema_gra: None,
-            sof_zman_tefila_mga: None,
-            sof_zman_tefila_gra: None,
-            chatzot: None,
-            mincha_gedola: None,
-            mincha_ketana: None,
-            plag_hamincha: None,
-            sunset: None,
-            tzeit_hakochavim: None,
-            tzeit_72_min: None,
-        };
-        let loc = GeoLocation::jerusalem();
-        let calc = ZmanimCalculator::new(loc);
-        let candle = calc.candle_lighting(&zmanim, 18).unwrap();
-        assert!(candle.is_none(), "No sunset means no candle lighting");
-    }
-
-    #[test]
-    fn test_geolocation_builders() {
-        let loc = GeoLocation::new(40.0, -74.0).unwrap()
-            .with_elevation(100.0)
-            .with_timezone(-300)
-            .with_name("Test City");
-        assert_eq!(loc.elevation_meters, 100.0);
-        assert_eq!(loc.timezone_offset_minutes, -300);
-        assert_eq!(loc.location_name.as_deref(), Some("Test City"));
-    }
-
-    #[test]
-    fn test_geolocation_jerusalem_preset() {
-        let loc = GeoLocation::jerusalem();
-        assert!((loc.latitude - 31.7683).abs() < 0.001);
-        assert!((loc.longitude - 35.2137).abs() < 0.001);
-        assert_eq!(loc.elevation_meters, 754.0);
-        assert_eq!(loc.timezone_offset_minutes, 120);
-        assert_eq!(loc.location_name.as_deref(), Some("Jerusalem"));
-    }
-
-    #[test]
-    fn test_geolocation_new_york_preset() {
-        let loc = GeoLocation::new_york();
-        assert!((loc.latitude - 40.7128).abs() < 0.001);
-        assert!((loc.longitude - (-74.0060)).abs() < 0.001);
-        assert_eq!(loc.elevation_meters, 10.0);
-        assert_eq!(loc.timezone_offset_minutes, -300);
-        assert_eq!(loc.location_name.as_deref(), Some("New York"));
-    }
-
-    #[test]
-    fn test_zmanim_temporal_ordering() {
-        let loc = GeoLocation::jerusalem();
-        let calc = ZmanimCalculator::new(loc);
-        let date = NaiveDate::from_ymd_opt(2024, 6, 15).unwrap();
-        let zmanim = calc.calculate(date).unwrap();
-
-        let parse = |s: &Option<String>| -> NaiveTime {
-            NaiveTime::parse_from_str(s.as_ref().unwrap(), "%H:%M").unwrap()
-        };
-
-        let alot = parse(&zmanim.alot_hashachar);
-        let sunrise = parse(&zmanim.sunrise);
-        let chatzot = parse(&zmanim.chatzot);
-        let sunset = parse(&zmanim.sunset);
-        let tzeit = parse(&zmanim.tzeit_hakochavim);
-
-        assert!(alot < sunrise, "alot {} should be before sunrise {}", alot, sunrise);
-        assert!(sunrise < chatzot, "sunrise {} should be before chatzot {}", sunrise, chatzot);
-        assert!(chatzot < sunset, "chatzot {} should be before sunset {}", chatzot, sunset);
-        assert!(sunset < tzeit, "sunset {} should be before tzeit {}", sunset, tzeit);
+        assert!(GeoLocation::new(40.0, -74.0)
+            .unwrap()
+            .with_timezone("Mars/Olympus")
+            .is_err());
+        let loc = GeoLocation::new(40.0, -74.0)
+            .unwrap()
+            .with_timezone("America/New_York")
+            .unwrap()
+            .with_name("Test");
+        assert_eq!(loc.location_name.as_deref(), Some("Test"));
     }
 }

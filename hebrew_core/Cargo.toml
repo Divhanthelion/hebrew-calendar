@@ -1,14 +1,18 @@
 [package]
 name = "hebrew_core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+description = "Hebrew calendar: dates, holidays (Israel and diaspora), Torah readings, zmanim, molad and Daf Yomi"
+license = "MIT"
+repository = "https://github.com/Divhanthelion/hebrew-calendar"
+keywords = ["hebrew", "calendar", "jewish", "zmanim", "parsha"]
+categories = ["date-and-time"]
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = { version = "0.10", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"
-
-
 
 [dev-dependencies]
 serde_json = "1.0"

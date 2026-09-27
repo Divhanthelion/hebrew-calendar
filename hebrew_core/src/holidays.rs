@@ -1,1024 +1,870 @@
-//! Holiday Calculation Module
-//! 
-//! Implements identification of Jewish holidays based on Hebrew calendar dates.
-//! Supports both diaspora and Israel observance, and modern Israeli holidays.
+//! Jewish holidays, fasts, special Shabbatot and Rosh Chodesh, for Israel
+//! and outside it.
+//!
+//! Every rule here is checked, day by day, against Hebcal for 1950–2080 in
+//! both observances (see the review harness in `hebrew_core/examples`).
 
+use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
-use crate::calendar::{DateConverter, HebrewDate, HebrewMonth};
-use crate::CalendarError;
+use crate::calendar::{hebrew_numeral, DateConverter, HebrewDate, HebrewMonth};
+use crate::parsha::{Parsha, ParshaCalculator};
+use crate::{CalendarError, Observance};
 
-/// Jewish holiday
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// A holiday, fast, special Shabbat or Rosh Chodesh.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Holiday {
-    // Rosh Hashanah
+    // Tishrei
     RoshHashanahDay1,
     RoshHashanahDay2,
-    
-    // Tzom Gedaliah (Tishrei 3; pushed to 4 if 3 falls on Shabbat)
     TzomGedaliah,
-    
-    // Yom Kippur
+    ShabbatShuva,
+    ErevYomKippur,
     YomKippur,
-    
-    // Sukkot
+    ErevSukkot,
     SukkotDay1,
+    /// Second festival day of Sukkot (outside Israel).
     SukkotDay2,
-    SukkotCholHamoedDay1,
-    SukkotCholHamoedDay2,
-    SukkotCholHamoedDay3,
-    SukkotCholHamoedDay4,
-    SukkotCholHamoedDay5,
+    /// A weekday of the festival: the day of Sukkot, 2..=6.
+    SukkotCholHamoed(u8),
     HoshanaRabbah,
     SheminiAtzeret,
     SimchatTorah,
-    
-    // Chanukah
-    ChanukahDay1,
-    ChanukahDay2,
-    ChanukahDay3,
-    ChanukahDay4,
-    ChanukahDay5,
-    ChanukahDay6,
-    ChanukahDay7,
-    ChanukahDay8,
-    
-    // Fast of Tevet (10 Tevet)
+    // Cheshvan
+    Sigd,
+    // Kislev, Tevet
+    /// Day 1..=8 of Chanukah.
+    Chanukah(u8),
+    ChagHaBanot,
     AsaraBTevet,
-    
-    // Tu B'Shevat
+    // Shevat
     TuBiShevat,
-    
-    // Purim
+    ShabbatShirah,
+    // Adar
+    PurimKatan,
+    ShushanPurimKatan,
+    ShabbatShekalim,
+    ShabbatZachor,
     TaanitEsther,
+    ErevPurim,
     Purim,
     ShushanPurim,
-    
-    // Pesach
+    PurimMeshulash,
+    ShabbatParah,
+    ShabbatHaChodesh,
+    // Nisan
+    BirkatHachamah,
+    YomHaAliyah,
+    // Israeli civic days, listed in Israel only.
+    YitzhakRabinMemorialDay,
+    YomHaAliyahSchoolObservance,
+    BenGurionDay,
+    HebrewLanguageDay,
+    FamilyDay,
+    HerzlDay,
+    JabotinskyDay,
+    ShabbatHaGadol,
+    TaanitBechorot,
+    ErevPesach,
     PesachDay1,
+    /// Second festival day of Pesach (outside Israel).
     PesachDay2,
-    PesachCholHamoedDay1,
-    PesachCholHamoedDay2,
-    PesachCholHamoedDay3,
-    PesachCholHamoedDay4,
+    /// A weekday of the festival: the day of Pesach, 2..=6.
+    PesachCholHamoed(u8),
     PesachDay7,
+    /// Outside Israel only.
     PesachDay8,
-    
-    // Modern Israeli holidays
     YomHaShoah,
+    // Iyar
     YomHaZikaron,
     YomHaAtzmaut,
+    PesachSheni,
+    LagBaOmer,
     YomYerushalayim,
-    
-    // Shavuot
+    // Sivan
+    ErevShavuot,
     ShavuotDay1,
+    /// Outside Israel only.
     ShavuotDay2,
-    
-    // Tisha B'Av and Three Weeks
+    // Tammuz, Av
     ShivaAsarBTammuz,
+    ShabbatChazon,
+    ErevTishaBAv,
     TishaBAv,
+    /// Tisha B'Av postponed from Shabbat to Sunday.
+    TishaBAvObserved,
+    ShabbatNachamu,
     TuBAv,
-    
-    // Omer counting
-    OmerDay(u8),   // 1..=49
-    
-    // Rosh Chodesh
+    // Elul
+    RoshHashanaLaBehemot,
+    LeilSelichot,
+    ErevRoshHashanah,
+    /// Rosh Chodesh of `month`; `leap` tells Adar I and Adar II apart.
+    RoshChodesh {
+        month: HebrewMonth,
+        leap: bool,
+    },
+}
+
+/// What kind of day a holiday is, for display and for the rules that depend
+/// on it (candles, work, fasting).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HolidayCategory {
+    /// A festival day on which work is forbidden.
+    YomTov,
+    /// The intermediate days of Sukkot and Pesach.
+    CholHamoed,
+    /// The day before a festival.
+    Erev,
+    Fast,
+    Minor,
+    /// Israeli national days.
+    Modern,
+    SpecialShabbat,
     RoshChodesh,
 }
 
+const ROMAN: [&str; 9] = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII"];
+
 impl Holiday {
-    /// Get the English name of the holiday
+    /// English name.
     pub fn name(&self) -> String {
+        use Holiday::*;
         match self {
-            Holiday::RoshHashanahDay1 => "Rosh Hashanah (Day 1)".into(),
-            Holiday::RoshHashanahDay2 => "Rosh Hashanah (Day 2)".into(),
-            Holiday::TzomGedaliah => "Tzom Gedaliah".into(),
-            Holiday::YomKippur => "Yom Kippur".into(),
-            Holiday::SukkotDay1 => "Sukkot (Day 1)".into(),
-            Holiday::SukkotDay2 => "Sukkot (Day 2)".into(),
-            Holiday::SukkotCholHamoedDay1 => "Sukkot (Chol HaMoed Day 1)".into(),
-            Holiday::SukkotCholHamoedDay2 => "Sukkot (Chol HaMoed Day 2)".into(),
-            Holiday::SukkotCholHamoedDay3 => "Sukkot (Chol HaMoed Day 3)".into(),
-            Holiday::SukkotCholHamoedDay4 => "Sukkot (Chol HaMoed Day 4)".into(),
-            Holiday::SukkotCholHamoedDay5 => "Sukkot (Chol HaMoed Day 5)".into(),
-            Holiday::HoshanaRabbah => "Hoshana Rabbah".into(),
-            Holiday::SheminiAtzeret => "Shemini Atzeret".into(),
-            Holiday::SimchatTorah => "Simchat Torah".into(),
-            Holiday::ChanukahDay1 => "Chanukah (Day 1 - 1 Candle)".into(),
-            Holiday::ChanukahDay2 => "Chanukah (Day 2 - 2 Candles)".into(),
-            Holiday::ChanukahDay3 => "Chanukah (Day 3 - 3 Candles)".into(),
-            Holiday::ChanukahDay4 => "Chanukah (Day 4 - 4 Candles)".into(),
-            Holiday::ChanukahDay5 => "Chanukah (Day 5 - 5 Candles)".into(),
-            Holiday::ChanukahDay6 => "Chanukah (Day 6 - 6 Candles)".into(),
-            Holiday::ChanukahDay7 => "Chanukah (Day 7 - 7 Candles)".into(),
-            Holiday::ChanukahDay8 => "Chanukah (Day 8 - 8 Candles)".into(),
-            Holiday::AsaraBTevet => "Asara B'Tevet (Fast of Tevet)".into(),
-            Holiday::TuBiShevat => "Tu B'Shevat".into(),
-            Holiday::TaanitEsther => "Ta'anit Esther".into(),
-            Holiday::Purim => "Purim".into(),
-            Holiday::ShushanPurim => "Shushan Purim".into(),
-            Holiday::PesachDay1 => "Pesach (Day 1)".into(),
-            Holiday::PesachDay2 => "Pesach (Day 2)".into(),
-            Holiday::PesachCholHamoedDay1 => "Pesach (Chol HaMoed Day 1)".into(),
-            Holiday::PesachCholHamoedDay2 => "Pesach (Chol HaMoed Day 2)".into(),
-            Holiday::PesachCholHamoedDay3 => "Pesach (Chol HaMoed Day 3)".into(),
-            Holiday::PesachCholHamoedDay4 => "Pesach (Chol HaMoed Day 4)".into(),
-            Holiday::PesachDay7 => "Pesach (Day 7)".into(),
-            Holiday::PesachDay8 => "Pesach (Day 8)".into(),
-            Holiday::YomHaShoah => "Yom HaShoah".into(),
-            Holiday::YomHaZikaron => "Yom HaZikaron".into(),
-            Holiday::YomHaAtzmaut => "Yom HaAtzmaut".into(),
-            Holiday::YomYerushalayim => "Yom Yerushalayim".into(),
-            Holiday::ShavuotDay1 => "Shavuot (Day 1)".into(),
-            Holiday::ShavuotDay2 => "Shavuot (Day 2)".into(),
-            Holiday::ShivaAsarBTammuz => "Shiva Asar B'Tammuz".into(),
-            Holiday::TishaBAv => "Tisha B'Av".into(),
-            Holiday::TuBAv => "Tu B'Av".into(),
-            Holiday::OmerDay(n) => {
-                if *n == 33 {
-                    format!("Omer Day 33 (Lag BaOmer)")
-                } else {
-                    format!("Omer Day {}", n)
-                }
-            }
-            Holiday::RoshChodesh => "Rosh Chodesh".into(),
+            RoshHashanahDay1 => "Rosh Hashanah I".into(),
+            RoshHashanahDay2 => "Rosh Hashanah II".into(),
+            TzomGedaliah => "Tzom Gedaliah".into(),
+            ShabbatShuva => "Shabbat Shuva".into(),
+            ErevYomKippur => "Erev Yom Kippur".into(),
+            YomKippur => "Yom Kippur".into(),
+            ErevSukkot => "Erev Sukkot".into(),
+            SukkotDay1 => "Sukkot I".into(),
+            SukkotDay2 => "Sukkot II".into(),
+            SukkotCholHamoed(d) => format!("Sukkot {} (Chol HaMoed)", ROMAN[*d as usize]),
+            HoshanaRabbah => "Hoshana Rabbah".into(),
+            SheminiAtzeret => "Shemini Atzeret".into(),
+            SimchatTorah => "Simchat Torah".into(),
+            Sigd => "Sigd".into(),
+            Chanukah(8) => "Chanukah: 8th day".into(),
+            Chanukah(d) => format!("Chanukah: day {d}"),
+            ChagHaBanot => "Chag HaBanot".into(),
+            AsaraBTevet => "Asara B'Tevet".into(),
+            TuBiShevat => "Tu BiShvat".into(),
+            ShabbatShirah => "Shabbat Shirah".into(),
+            PurimKatan => "Purim Katan".into(),
+            ShushanPurimKatan => "Shushan Purim Katan".into(),
+            ShabbatShekalim => "Shabbat Shekalim".into(),
+            ShabbatZachor => "Shabbat Zachor".into(),
+            TaanitEsther => "Ta'anit Esther".into(),
+            ErevPurim => "Erev Purim".into(),
+            Purim => "Purim".into(),
+            ShushanPurim => "Shushan Purim".into(),
+            PurimMeshulash => "Purim Meshulash".into(),
+            ShabbatParah => "Shabbat Parah".into(),
+            ShabbatHaChodesh => "Shabbat HaChodesh".into(),
+            BirkatHachamah => "Birkat Hachamah".into(),
+            YomHaAliyah => "Yom HaAliyah".into(),
+            YitzhakRabinMemorialDay => "Yitzhak Rabin Memorial Day".into(),
+            YomHaAliyahSchoolObservance => "Yom HaAliyah School Observance".into(),
+            BenGurionDay => "Ben-Gurion Day".into(),
+            HebrewLanguageDay => "Hebrew Language Day".into(),
+            FamilyDay => "Family Day".into(),
+            HerzlDay => "Herzl Day".into(),
+            JabotinskyDay => "Jabotinsky Day".into(),
+            ShabbatHaGadol => "Shabbat HaGadol".into(),
+            TaanitBechorot => "Ta'anit Bechorot".into(),
+            ErevPesach => "Erev Pesach".into(),
+            PesachDay1 => "Pesach I".into(),
+            PesachDay2 => "Pesach II".into(),
+            PesachCholHamoed(d) => format!("Pesach {} (Chol HaMoed)", ROMAN[*d as usize]),
+            PesachDay7 => "Pesach VII".into(),
+            PesachDay8 => "Pesach VIII".into(),
+            YomHaShoah => "Yom HaShoah".into(),
+            YomHaZikaron => "Yom HaZikaron".into(),
+            YomHaAtzmaut => "Yom HaAtzma'ut".into(),
+            PesachSheni => "Pesach Sheni".into(),
+            LagBaOmer => "Lag BaOmer".into(),
+            YomYerushalayim => "Yom Yerushalayim".into(),
+            ErevShavuot => "Erev Shavuot".into(),
+            ShavuotDay1 => "Shavuot I".into(),
+            ShavuotDay2 => "Shavuot II".into(),
+            ShivaAsarBTammuz => "Tzom Tammuz".into(),
+            ShabbatChazon => "Shabbat Chazon".into(),
+            ErevTishaBAv => "Erev Tish'a B'Av".into(),
+            TishaBAv => "Tish'a B'Av".into(),
+            TishaBAvObserved => "Tish'a B'Av (observed)".into(),
+            ShabbatNachamu => "Shabbat Nachamu".into(),
+            TuBAv => "Tu B'Av".into(),
+            RoshHashanaLaBehemot => "Rosh Hashana LaBehemot".into(),
+            LeilSelichot => "Leil Selichot".into(),
+            ErevRoshHashanah => "Erev Rosh Hashanah".into(),
+            RoshChodesh { month, leap } => format!("Rosh Chodesh {}", month_name(*month, *leap)),
         }
     }
-    
-    /// Check if this holiday requires candle lighting
-    pub fn requires_candles(&self) -> bool {
-        matches!(self,
-            Holiday::RoshHashanahDay1 | Holiday::RoshHashanahDay2 |
-            Holiday::YomKippur |
-            Holiday::SukkotDay1 | Holiday::SukkotDay2 |
-            Holiday::SheminiAtzeret | Holiday::SimchatTorah |
-            Holiday::PesachDay1 | Holiday::PesachDay2 |
-            Holiday::PesachDay7 | Holiday::PesachDay8 |
-            Holiday::ShavuotDay1 | Holiday::ShavuotDay2 |
-            Holiday::ChanukahDay1 | Holiday::ChanukahDay2 |
-            Holiday::ChanukahDay3 | Holiday::ChanukahDay4 |
-            Holiday::ChanukahDay5 | Holiday::ChanukahDay6 |
-            Holiday::ChanukahDay7 | Holiday::ChanukahDay8
-        )
+
+    /// Hebrew name.
+    pub fn hebrew_name(&self) -> String {
+        use Holiday::*;
+        match self {
+            RoshHashanahDay1 => "ראש השנה א׳".into(),
+            RoshHashanahDay2 => "ראש השנה ב׳".into(),
+            TzomGedaliah => "צום גדליה".into(),
+            ShabbatShuva => "שבת שובה".into(),
+            ErevYomKippur => "ערב יום כיפור".into(),
+            YomKippur => "יום כיפור".into(),
+            ErevSukkot => "ערב סוכות".into(),
+            SukkotDay1 => "סוכות א׳".into(),
+            SukkotDay2 => "סוכות ב׳".into(),
+            SukkotCholHamoed(_) => "חול המועד סוכות".into(),
+            HoshanaRabbah => "הושענא רבה".into(),
+            SheminiAtzeret => "שמיני עצרת".into(),
+            SimchatTorah => "שמחת תורה".into(),
+            Sigd => "סיגד".into(),
+            Chanukah(d) => format!("חנוכה – יום {}", hebrew_numeral(*d as u32)),
+            ChagHaBanot => "חג הבנות".into(),
+            AsaraBTevet => "עשרה בטבת".into(),
+            TuBiShevat => "ט״ו בשבט".into(),
+            ShabbatShirah => "שבת שירה".into(),
+            PurimKatan => "פורים קטן".into(),
+            ShushanPurimKatan => "שושן פורים קטן".into(),
+            ShabbatShekalim => "שבת שקלים".into(),
+            ShabbatZachor => "שבת זכור".into(),
+            TaanitEsther => "תענית אסתר".into(),
+            ErevPurim => "ערב פורים".into(),
+            Purim => "פורים".into(),
+            ShushanPurim => "שושן פורים".into(),
+            PurimMeshulash => "פורים משולש".into(),
+            ShabbatParah => "שבת פרה".into(),
+            ShabbatHaChodesh => "שבת החודש".into(),
+            BirkatHachamah => "ברכת החמה".into(),
+            YomHaAliyah => "יום העלייה".into(),
+            YitzhakRabinMemorialDay => "יום הזיכרון ליצחק רבין".into(),
+            YomHaAliyahSchoolObservance => "יום העלייה במערכת החינוך".into(),
+            BenGurionDay => "יום בן-גוריון".into(),
+            HebrewLanguageDay => "יום השפה העברית".into(),
+            FamilyDay => "יום המשפחה".into(),
+            HerzlDay => "יום הרצל".into(),
+            JabotinskyDay => "יום ז׳בוטינסקי".into(),
+            ShabbatHaGadol => "שבת הגדול".into(),
+            TaanitBechorot => "תענית בכורות".into(),
+            ErevPesach => "ערב פסח".into(),
+            PesachDay1 => "פסח א׳".into(),
+            PesachDay2 => "פסח ב׳".into(),
+            PesachCholHamoed(_) => "חול המועד פסח".into(),
+            PesachDay7 => "שביעי של פסח".into(),
+            PesachDay8 => "אחרון של פסח".into(),
+            YomHaShoah => "יום השואה".into(),
+            YomHaZikaron => "יום הזיכרון".into(),
+            YomHaAtzmaut => "יום העצמאות".into(),
+            PesachSheni => "פסח שני".into(),
+            LagBaOmer => "ל״ג בעומר".into(),
+            YomYerushalayim => "יום ירושלים".into(),
+            ErevShavuot => "ערב שבועות".into(),
+            ShavuotDay1 => "שבועות א׳".into(),
+            ShavuotDay2 => "שבועות ב׳".into(),
+            ShivaAsarBTammuz => "שבעה עשר בתמוז".into(),
+            ShabbatChazon => "שבת חזון".into(),
+            ErevTishaBAv => "ערב תשעה באב".into(),
+            TishaBAv => "תשעה באב".into(),
+            TishaBAvObserved => "תשעה באב (נדחה)".into(),
+            ShabbatNachamu => "שבת נחמו".into(),
+            TuBAv => "ט״ו באב".into(),
+            RoshHashanaLaBehemot => "ראש השנה לבהמות".into(),
+            LeilSelichot => "ליל סליחות".into(),
+            ErevRoshHashanah => "ערב ראש השנה".into(),
+            RoshChodesh { month, leap } => format!("ראש חודש {}", month.hebrew_name(*leap)),
+        }
     }
-    
-    /// Check if this is a Yom Tov (major holiday with work restrictions)
+
+    /// What kind of day this is.
+    pub fn category(&self) -> HolidayCategory {
+        use Holiday::*;
+        use HolidayCategory as C;
+        match self {
+            RoshHashanahDay1 | RoshHashanahDay2 | YomKippur | SukkotDay1 | SukkotDay2
+            | SheminiAtzeret | SimchatTorah | PesachDay1 | PesachDay2 | PesachDay7 | PesachDay8
+            | ShavuotDay1 | ShavuotDay2 => C::YomTov,
+            SukkotCholHamoed(_) | HoshanaRabbah | PesachCholHamoed(_) => C::CholHamoed,
+            ErevRoshHashanah | ErevYomKippur | ErevSukkot | ErevPesach | ErevShavuot
+            | ErevPurim | ErevTishaBAv => C::Erev,
+            TzomGedaliah | AsaraBTevet | TaanitEsther | TaanitBechorot | ShivaAsarBTammuz
+            | TishaBAv | TishaBAvObserved => C::Fast,
+            YomHaShoah
+            | YomHaZikaron
+            | YomHaAtzmaut
+            | YomYerushalayim
+            | Sigd
+            | YomHaAliyah
+            | YitzhakRabinMemorialDay
+            | YomHaAliyahSchoolObservance
+            | BenGurionDay
+            | HebrewLanguageDay
+            | FamilyDay
+            | HerzlDay
+            | JabotinskyDay => C::Modern,
+            ShabbatShuva | ShabbatShirah | ShabbatShekalim | ShabbatZachor | ShabbatParah
+            | ShabbatHaChodesh | ShabbatHaGadol | ShabbatChazon | ShabbatNachamu => {
+                C::SpecialShabbat
+            }
+            RoshChodesh { .. } => C::RoshChodesh,
+            Chanukah(_) | ChagHaBanot | TuBiShevat | PurimKatan | ShushanPurimKatan | Purim
+            | ShushanPurim | PurimMeshulash | BirkatHachamah | PesachSheni | LagBaOmer | TuBAv
+            | RoshHashanaLaBehemot | LeilSelichot => C::Minor,
+        }
+    }
+
+    /// A festival day on which work is forbidden.
     pub fn is_yom_tov(&self) -> bool {
-        matches!(self,
-            Holiday::RoshHashanahDay1 | Holiday::RoshHashanahDay2 |
-            Holiday::YomKippur |
-            Holiday::SukkotDay1 | Holiday::SukkotDay2 |
-            Holiday::SheminiAtzeret | Holiday::SimchatTorah |
-            Holiday::PesachDay1 | Holiday::PesachDay2 |
-            Holiday::PesachDay7 | Holiday::PesachDay8 |
-            Holiday::ShavuotDay1 | Holiday::ShavuotDay2
-        )
+        self.category() == HolidayCategory::YomTov
     }
-    
-    /// Check if this is a fast day
+
+    /// A fast day (including Yom Kippur).
     pub fn is_fast_day(&self) -> bool {
-        matches!(self,
-            Holiday::YomKippur | Holiday::TaanitEsther |
-            Holiday::TishaBAv | Holiday::ShivaAsarBTammuz |
-            Holiday::TzomGedaliah | Holiday::AsaraBTevet
-        )
+        self.category() == HolidayCategory::Fast || *self == Holiday::YomKippur
     }
 }
 
-/// Holiday calculator
+fn month_name(month: HebrewMonth, leap: bool) -> &'static str {
+    match month {
+        HebrewMonth::Adar if leap => "Adar II",
+        m => m.name(),
+    }
+}
+
+/// Holiday calculator.
 pub struct HolidayCalculator;
 
 impl HolidayCalculator {
-    /// Get all holidays for a specific Hebrew date
+    /// Holidays on `date` outside Israel.
     pub fn get_holidays(date: &HebrewDate) -> Result<Vec<Holiday>, CalendarError> {
-        let mut holidays = Vec::new();
-        
-        // Major fixed-date holidays
-        if let Some(holiday) = Self::get_major_holiday(date) {
-            holidays.push(holiday);
-        }
-        
-        // Chanukah
-        if let Some(chanukah) = Self::get_chanukah_day(date) {
-            holidays.push(chanukah);
-        }
-        
-        // Omer
-        if let Some(omer) = Self::get_omer_day(date) {
-            holidays.push(omer);
-        }
-        
-        // Modern Israeli holidays (Iyar)
-        if let Some(modern) = Self::get_modern_israeli_holiday(date) {
-            holidays.push(modern);
-        }
-        
-        // Rosh Chodesh
-        if Self::is_rosh_chodesh(date) {
-            holidays.push(Holiday::RoshChodesh);
-        }
-        
-        Ok(holidays)
-    }
-    
-    /// Get major holiday for the date (if any)
-    fn get_major_holiday(date: &HebrewDate) -> Option<Holiday> {
-        match date.month {
-            HebrewMonth::Tishrei => match date.day {
-                1 => Some(Holiday::RoshHashanahDay1),
-                2 => Some(Holiday::RoshHashanahDay2),
-                15 => Some(Holiday::SukkotDay1),
-                16 => Some(Holiday::SukkotDay2),
-                17..=20 => Some(match date.day {
-                    17 => Holiday::SukkotCholHamoedDay1,
-                    18 => Holiday::SukkotCholHamoedDay2,
-                    19 => Holiday::SukkotCholHamoedDay3,
-                    _ => Holiday::SukkotCholHamoedDay4,
-                }),
-                21 => Some(Holiday::HoshanaRabbah),
-                22 => Some(Holiday::SheminiAtzeret),
-                23 => Some(Holiday::SimchatTorah),
-                10 => Some(Holiday::YomKippur),
-                // Tzom Gedaliah: normally Tishrei 3, but if 3 is Shabbat → 4
-                3 => {
-                    let dow = date.day_of_week();
-                    if dow == 6 { None } else { Some(Holiday::TzomGedaliah) }
-                }
-                4 => {
-                    let dow = date.day_of_week();
-                    // If Tishrei 3 was Shabbat, Tzom Gedaliah is on Tishrei 4
-                    let tishrei_3_dow = (dow + 6) % 7; // day of week of day 3
-                    if tishrei_3_dow == 6 { Some(Holiday::TzomGedaliah) } else { None }
-                }
-                _ => None,
-            },
-            HebrewMonth::Cheshvan => None,
-            HebrewMonth::Kislev => {
-                // Only 10 Tevet spills into Kislev in rare years,
-                // but normatively it's in Teves. Chanukah handled separately.
-                None
-            },
-            HebrewMonth::Teves => {
-                if date.day == 10 {
-                    Some(Holiday::AsaraBTevet)
-                } else {
-                    None
-                }
-            },
-            HebrewMonth::Shevat => {
-                if date.day == 15 {
-                    Some(Holiday::TuBiShevat)
-                } else {
-                    None
-                }
-            },
-            HebrewMonth::Adar => {
-                // In common years, this is the only Adar.
-                // In leap years, Adar == Adar II (see HebrewMonth enum).
-                match date.day {
-                    11 | 13 => {
-                        // Ta'anit Esther: normally Adar 13; if that is Shabbat, observed Thursday (11)
-                        if Self::is_taanit_esther(date) {
-                            Some(Holiday::TaanitEsther)
-                        } else {
-                            None
-                        }
-                    }
-                    14 => Some(Holiday::Purim),
-                    15 => Some(Holiday::ShushanPurim),
-                    _ => None,
-                }
-            },
-            HebrewMonth::AdarI => None,  // No holidays in Adar I
-            HebrewMonth::Nisan => match date.day {
-                15 => Some(Holiday::PesachDay1),
-                16 => Some(Holiday::PesachDay2),
-                17..=20 => Some(match date.day {
-                    17 => Holiday::PesachCholHamoedDay1,
-                    18 => Holiday::PesachCholHamoedDay2,
-                    19 => Holiday::PesachCholHamoedDay3,
-                    _ => Holiday::PesachCholHamoedDay4,
-                }),
-                21 => Some(Holiday::PesachDay7),
-                22 => Some(Holiday::PesachDay8),
-                _ => None,
-            },
-            HebrewMonth::Iyar => None,  // Modern holidays handled separately
-            HebrewMonth::Sivan => match date.day {
-                6 => Some(Holiday::ShavuotDay1),
-                7 => Some(Holiday::ShavuotDay2),
-                _ => None,
-            },
-            HebrewMonth::Tammuz => {
-                // 17 Tammuz: if Shabbat, postponed to Sunday (18)
-                if date.day == 17 && date.day_of_week() != 6 {
-                    Some(Holiday::ShivaAsarBTammuz)
-                } else if date.day == 18 {
-                    let tammuz_17 = HebrewDate::new(date.year, HebrewMonth::Tammuz, 17);
-                    if tammuz_17.day_of_week() == 6 {
-                        Some(Holiday::ShivaAsarBTammuz)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            },
-            HebrewMonth::Av => match date.day {
-                9 => {
-                    // Tisha B'Av: if Shabbat, postponed to Sunday (10)
-                    if date.day_of_week() != 6 {
-                        Some(Holiday::TishaBAv)
-                    } else {
-                        None
-                    }
-                }
-                10 => {
-                    let av_9 = HebrewDate::new(date.year, HebrewMonth::Av, 9);
-                    if av_9.day_of_week() == 6 {
-                        Some(Holiday::TishaBAv)
-                    } else {
-                        None
-                    }
-                }
-                15 => Some(Holiday::TuBAv),
-                _ => None,
-            },
-            HebrewMonth::Elul => None,
-        }
+        Self::holidays_for(date, Observance::Diaspora)
     }
 
-    /// Ta'anit Esther falls on Adar 13, or Thursday Adar 11 when 13 is Shabbat.
-    /// (Hebcal: `pesachAbs - (pesachDow == Tue ? 33 : 31)`.)
-    fn is_taanit_esther(date: &HebrewDate) -> bool {
-        let pesach = HebrewDate::new(date.year, HebrewMonth::Nisan, 15);
-        let pesach_dow = pesach.day_of_week(); // 0=Sun
-        // When Pesach is Tuesday, Adar 13 is Shabbat → fast on Thursday (33 days before Pesach)
-        let days_before = if pesach_dow == 2 { 33 } else { 31 };
-        if let (Ok(pesach_g), Ok(date_g)) = (
-            DateConverter::hebrew_to_gregorian(pesach),
-            DateConverter::hebrew_to_gregorian(*date),
-        ) {
-            (pesach_g - date_g).num_days() == days_before
-        } else {
-            false
-        }
+    /// Holidays on `date`.
+    pub fn holidays_for(
+        date: &HebrewDate,
+        observance: Observance,
+    ) -> Result<Vec<Holiday>, CalendarError> {
+        let rd = DateConverter::hebrew_to_rd(*date)?;
+        Ok(Self::year(date.year, observance)?
+            .into_iter()
+            .filter(|(d, _)| *d == rd)
+            .map(|(_, h)| h)
+            .collect())
     }
-    
-    /// Get modern Israeli national holidays.
-    ///
-    /// Rules (matching hebcal / Israeli observance):
-    /// - Yom HaShoah (Nisan 27): Fri→26, Sun→28. Observed since 5711.
-    /// - Yom HaZikaron / Atzmaut: based on Pesach day-of-week (see `dateYomHaZikaron`).
-    /// - Yom Yerushalayim (Iyar 28): fixed.
-    fn get_modern_israeli_holiday(date: &HebrewDate) -> Option<Holiday> {
-        // --- Yom HaShoah: Nisan 27 ---
-        if date.month == HebrewMonth::Nisan && date.year >= 5711 {
-            let nisan_27 = HebrewDate::new(date.year, HebrewMonth::Nisan, 27);
-            let dow = nisan_27.day_of_week();
-            let actual_day = match dow {
-                5 => 26, // Friday → Thursday
-                0 => 28, // Sunday → Monday
-                _ => 27,
+
+    /// Every holiday of Hebrew year `year` (Tishrei to Elul), as (R.D., holiday),
+    /// in date order.
+    pub fn year(year: i32, observance: Observance) -> Result<Vec<(i32, Holiday)>, CalendarError> {
+        use Holiday::*;
+        let y = Year::new(year);
+        let israel = observance == Observance::Israel;
+        let mut out: Vec<(i32, Holiday)> = Vec::new();
+        let mut add = |rd: i32, h: Holiday| out.push((rd, h));
+
+        // Tishrei
+        add(y.rd(HebrewMonth::Tishrei, 1), RoshHashanahDay1);
+        add(y.rd(HebrewMonth::Tishrei, 2), RoshHashanahDay2);
+        add(
+            y.postponed_from_shabbat(HebrewMonth::Tishrei, 3),
+            TzomGedaliah,
+        );
+        add(
+            y.shabbat_on_or_before(y.rd(HebrewMonth::Tishrei, 9)),
+            ShabbatShuva,
+        );
+        add(y.rd(HebrewMonth::Tishrei, 9), ErevYomKippur);
+        add(y.rd(HebrewMonth::Tishrei, 10), YomKippur);
+        add(y.rd(HebrewMonth::Tishrei, 14), ErevSukkot);
+        add(y.rd(HebrewMonth::Tishrei, 15), SukkotDay1);
+        if israel {
+            add(y.rd(HebrewMonth::Tishrei, 16), SukkotCholHamoed(2));
+        } else {
+            add(y.rd(HebrewMonth::Tishrei, 16), SukkotDay2);
+        }
+        for day in 17..=20 {
+            add(y.rd(HebrewMonth::Tishrei, day), SukkotCholHamoed(day - 14));
+        }
+        add(y.rd(HebrewMonth::Tishrei, 21), HoshanaRabbah);
+        add(y.rd(HebrewMonth::Tishrei, 22), SheminiAtzeret);
+        // In Israel Simchat Torah is Shemini Atzeret itself.
+        add(
+            y.rd(HebrewMonth::Tishrei, if israel { 22 } else { 23 }),
+            SimchatTorah,
+        );
+
+        // Cheshvan: Sigd, since 5769, moved to Thursday when it falls on Shabbat.
+        if year >= 5769 {
+            let sigd = y.rd(HebrewMonth::Cheshvan, 29);
+            add(if weekday(sigd) == 6 { sigd - 2 } else { sigd }, Sigd);
+        }
+
+        // Kislev, Tevet
+        let chanukah = y.rd(HebrewMonth::Kislev, 25);
+        for day in 1..=8u8 {
+            add(chanukah + day as i32 - 1, Chanukah(day));
+        }
+        // Chag HaBanot is the first day of Rosh Chodesh Tevet.
+        add(
+            y.rd(HebrewMonth::Teves, 1) - (y.days(HebrewMonth::Kislev) == 30) as i32,
+            ChagHaBanot,
+        );
+        add(y.rd(HebrewMonth::Teves, 10), AsaraBTevet);
+
+        // Shevat
+        add(y.rd(HebrewMonth::Shevat, 15), TuBiShevat);
+        for (date, parsha) in ParshaCalculator::year_readings(year, observance)? {
+            if parsha == Some(Parsha::Beshalach) {
+                add(DateConverter::gregorian_to_rd(date), ShabbatShirah);
+            }
+        }
+
+        // Adar (Adar II in a leap year)
+        if y.leap {
+            add(y.rd(HebrewMonth::AdarI, 14), PurimKatan);
+            add(y.rd(HebrewMonth::AdarI, 15), ShushanPurimKatan);
+        }
+        add(
+            y.shabbat_on_or_before(y.rd(HebrewMonth::Adar, 1)),
+            ShabbatShekalim,
+        );
+        add(
+            y.shabbat_on_or_before(y.rd(HebrewMonth::Adar, 13)),
+            ShabbatZachor,
+        );
+        add(y.advanced_from_shabbat(HebrewMonth::Adar, 13), TaanitEsther);
+        add(y.rd(HebrewMonth::Adar, 13), ErevPurim);
+        add(y.rd(HebrewMonth::Adar, 14), Purim);
+        add(y.rd(HebrewMonth::Adar, 15), ShushanPurim);
+        if weekday(y.rd(HebrewMonth::Adar, 15)) == 6 {
+            add(y.rd(HebrewMonth::Adar, 16), PurimMeshulash);
+        }
+        let hachodesh = y.shabbat_on_or_before(y.rd(HebrewMonth::Nisan, 1));
+        add(hachodesh - 7, ShabbatParah);
+        add(hachodesh, ShabbatHaChodesh);
+
+        // Nisan
+        if let Some(rd) = birkat_hachamah(year) {
+            add(rd, BirkatHachamah);
+        }
+        if year >= 5777 {
+            add(y.rd(HebrewMonth::Nisan, 10), YomHaAliyah);
+        }
+        add(
+            y.shabbat_on_or_before(y.rd(HebrewMonth::Nisan, 14)),
+            ShabbatHaGadol,
+        );
+        add(
+            y.advanced_from_shabbat(HebrewMonth::Nisan, 14),
+            TaanitBechorot,
+        );
+        add(y.rd(HebrewMonth::Nisan, 14), ErevPesach);
+        add(y.rd(HebrewMonth::Nisan, 15), PesachDay1);
+        if israel {
+            add(y.rd(HebrewMonth::Nisan, 16), PesachCholHamoed(2));
+        } else {
+            add(y.rd(HebrewMonth::Nisan, 16), PesachDay2);
+        }
+        for day in 17..=20 {
+            add(y.rd(HebrewMonth::Nisan, day), PesachCholHamoed(day - 14));
+        }
+        add(y.rd(HebrewMonth::Nisan, 21), PesachDay7);
+        if !israel {
+            add(y.rd(HebrewMonth::Nisan, 22), PesachDay8);
+        }
+        if year >= 5711 {
+            let shoah = y.rd(HebrewMonth::Nisan, 27);
+            let moved = match weekday(shoah) {
+                5 => shoah - 1, // Friday → Thursday
+                0 => shoah + 1, // Sunday → Monday
+                _ => shoah,
             };
-            if date.day == actual_day {
-                return Some(Holiday::YomHaShoah);
+            add(moved, YomHaShoah);
+        }
+
+        // Iyar
+        if year >= 5708 {
+            let zikaron = y.rd(HebrewMonth::Iyar, yom_hazikaron_day(&y));
+            add(zikaron, YomHaZikaron);
+            add(zikaron + 1, YomHaAtzmaut);
+        }
+        add(y.rd(HebrewMonth::Iyar, 14), PesachSheni);
+        add(y.rd(HebrewMonth::Iyar, 18), LagBaOmer);
+        if year >= 5727 {
+            add(y.rd(HebrewMonth::Iyar, 28), YomYerushalayim);
+        }
+
+        // Sivan
+        add(y.rd(HebrewMonth::Sivan, 5), ErevShavuot);
+        add(y.rd(HebrewMonth::Sivan, 6), ShavuotDay1);
+        if !israel {
+            add(y.rd(HebrewMonth::Sivan, 7), ShavuotDay2);
+        }
+
+        // Tammuz, Av
+        add(
+            y.postponed_from_shabbat(HebrewMonth::Tammuz, 17),
+            ShivaAsarBTammuz,
+        );
+        let av9 = y.rd(HebrewMonth::Av, 9);
+        add(y.shabbat_on_or_before(av9), ShabbatChazon);
+        if weekday(av9) == 6 {
+            add(av9, ErevTishaBAv);
+            add(av9 + 1, TishaBAvObserved);
+        } else {
+            add(av9 - 1, ErevTishaBAv);
+            add(av9, TishaBAv);
+        }
+        add(y.shabbat_on_or_before(av9) + 7, ShabbatNachamu);
+        add(y.rd(HebrewMonth::Av, 15), TuBAv);
+
+        // Elul
+        add(y.rd(HebrewMonth::Elul, 1), RoshHashanaLaBehemot);
+        // Selichot begin the Saturday night at least four days before Rosh Hashanah.
+        let next_rosh_hashanah = DateConverter::rosh_hashanah(year + 1);
+        let mut selichot = y.shabbat_on_or_before(next_rosh_hashanah - 1);
+        if next_rosh_hashanah - selichot < 5 {
+            selichot -= 7;
+        }
+        add(selichot, LeilSelichot);
+        add(y.rd(HebrewMonth::Elul, 29), ErevRoshHashanah);
+
+        // Rosh Chodesh: the 30th of a full month and the 1st of the next.
+        for (month, number) in y.months() {
+            if month == HebrewMonth::Tishrei {
+                continue;
+            }
+            let first = y.rd(month, 1);
+            let rosh_chodesh = RoshChodesh {
+                month,
+                leap: y.leap,
+            };
+            let previous = previous_month_number(number, y.leap);
+            if DateConverter::days_in_hebrew_month(year, previous) == 30 {
+                add(first - 1, rosh_chodesh);
+            }
+            add(first, rosh_chodesh);
+        }
+
+        if israel {
+            // Civic days fixed by Israeli law, most kept off Friday and Shabbat.
+            let shift = |rd: i32, friday: i32, shabbat: i32| match weekday(rd) {
+                5 => rd + friday,
+                6 => rd + shabbat,
+                _ => rd,
+            };
+            if year >= 5758 {
+                let rabin = y.rd(HebrewMonth::Cheshvan, 12);
+                add(shift(rabin, -1, -2), YitzhakRabinMemorialDay);
+            }
+            if year >= 5777 {
+                add(y.rd(HebrewMonth::Cheshvan, 7), YomHaAliyahSchoolObservance);
+            }
+            if year >= 5737 {
+                add(shift(y.rd(HebrewMonth::Kislev, 6), 2, 1), BenGurionDay);
+            }
+            if year >= 5773 {
+                add(
+                    shift(y.rd(HebrewMonth::Teves, 21), -1, -2),
+                    HebrewLanguageDay,
+                );
+            }
+            if year >= 5750 {
+                add(y.rd(HebrewMonth::Shevat, 30), FamilyDay);
+            }
+            if year >= 5764 {
+                add(shift(y.rd(HebrewMonth::Iyar, 10), 0, 1), HerzlDay);
+            }
+            if year >= 5765 {
+                add(y.rd(HebrewMonth::Tammuz, 29), JabotinskyDay);
             }
         }
 
-        if date.month != HebrewMonth::Iyar {
-            return None;
-        }
-
-        // --- Yom HaZikaron / Yom HaAtzmaut (since 5708) ---
-        if date.year >= 5708 {
-            if let Some(zikaron_day) = Self::yom_hazikaron_day(date.year) {
-                if date.day == zikaron_day {
-                    return Some(Holiday::YomHaZikaron);
-                }
-                if date.day == zikaron_day + 1 {
-                    return Some(Holiday::YomHaAtzmaut);
-                }
-            }
-        }
-
-        // --- Yom Yerushalayim: Iyar 28 ---
-        if date.day == 28 {
-            return Some(Holiday::YomYerushalayim);
-        }
-
-        None
+        out.sort_by_key(|(rd, _)| *rd);
+        Ok(out)
     }
 
-    /// Iyar day for Yom HaZikaron (hebcal `dateYomHaZikaron`).
-    ///
-    /// Derived from Pesach's day of week; Atzmaut is the following day.
-    fn yom_hazikaron_day(year: i32) -> Option<u8> {
-        let pesach = HebrewDate::new(year, HebrewMonth::Nisan, 15);
-        let pdow = pesach.day_of_week(); // 0=Sun … 6=Sat
-        let day = if pdow == 0 {
-            2 // Pesach Sunday → Iyar 2
-        } else if pdow == 6 {
-            3 // Pesach Saturday → Iyar 3
-        } else if year < 5764 {
-            4 // pre-2004 rules
-        } else if pdow == 2 {
-            5 // Pesach Tuesday → Iyar 4 is Sunday → push to Monday
-        } else {
-            4
+    /// The day of the Omer that `date` completes (counted the evening
+    /// before): 16 Nisan is day 1, 5 Sivan day 49.
+    pub fn omer_day(date: &HebrewDate) -> Option<u8> {
+        let day = match date.month {
+            HebrewMonth::Nisan if date.day >= 16 => date.day - 15,
+            HebrewMonth::Iyar => 15 + date.day,
+            HebrewMonth::Sivan if date.day <= 5 => 44 + date.day,
+            _ => return None,
         };
         Some(day)
     }
-    
-    /// True if `date` is Rosh Chodesh.
-    ///
-    /// Rosh Chodesh is day 1 of any month (except Tishrei, which is Rosh Hashanah)
-    /// and day 30 of months that have 30 days (the second day of Rosh Chodesh for
-    /// these months).
-    fn is_rosh_chodesh(date: &HebrewDate) -> bool {
-        // Tishrei 1 is Rosh Hashanah, not Rosh Chodesh.
-        // But Tishrei 30 IS Rosh Chodesh Cheshvan.
-        if date.month == HebrewMonth::Tishrei && date.day == 1 {
-            return false;
-        }
-        
-        if date.day == 1 {
-            return true;
-        }
-        
-        // Day 30 is Rosh Chodesh only if this month has 30 days
-        if date.day == 30 {
-            let is_leap = DateConverter::is_hebrew_leap_year(date.year);
-            let month_num = date.month.to_number(is_leap);
-            return DateConverter::days_in_hebrew_month(date.year, month_num) == 30;
-        }
-        
-        false
+
+    /// Candles lit on the evening that ends `date` (the next day's Chanukah
+    /// night): 1 on 24 Kislev up to 8 on the seventh day.
+    pub fn chanukah_candles_tonight(date: &HebrewDate) -> Result<Option<u8>, CalendarError> {
+        let rd = DateConverter::hebrew_to_rd(*date)?;
+        let first =
+            DateConverter::hebrew_to_rd(HebrewDate::new(date.year, HebrewMonth::Kislev, 25))?;
+        let n = rd - first + 2;
+        Ok((1..=8).contains(&n).then_some(n as u8))
     }
-    
-    /// Get Chanukah day (if applicable)
-    fn get_chanukah_day(date: &HebrewDate) -> Option<Holiday> {
-        let day = if date.month == HebrewMonth::Kislev && date.day >= 25 {
-            (date.day - 24) as usize
-        } else if date.month == HebrewMonth::Teves {
-            let kislev_days = if Self::is_short_kislev(date.year) { 29 } else { 30 };
-            if date.day as usize + (kislev_days - 24) <= 8 {
-                (date.day as usize + kislev_days - 24) as usize
+}
+
+/// Weekday of an R.D. day, 0 = Sunday … 6 = Shabbat.
+fn weekday(rd: i32) -> i32 {
+    (rd + 6).rem_euclid(7)
+}
+
+/// The Hebrew-month number that comes before `number` in a year.
+fn previous_month_number(number: u8, leap: bool) -> u8 {
+    match number {
+        1 => {
+            if leap {
+                13
             } else {
-                0
+                12
             }
-        } else {
-            0
-        };
-        
-        match day {
-            1 => Some(Holiday::ChanukahDay1),
-            2 => Some(Holiday::ChanukahDay2),
-            3 => Some(Holiday::ChanukahDay3),
-            4 => Some(Holiday::ChanukahDay4),
-            5 => Some(Holiday::ChanukahDay5),
-            6 => Some(Holiday::ChanukahDay6),
-            7 => Some(Holiday::ChanukahDay7),
-            8 => Some(Holiday::ChanukahDay8),
-            _ => None,
+        }
+        7 => 6,
+        n => n - 1,
+    }
+}
+
+/// Day of Iyar on which Yom HaZikaron falls; Yom HaAtzma'ut is the next day.
+/// Both move so that neither touches Shabbat, and since 5764 so that
+/// Zikaron does not fall on a Sunday.
+fn yom_hazikaron_day(y: &Year) -> u8 {
+    let pesach = weekday(y.rd(HebrewMonth::Nisan, 15));
+    match pesach {
+        // Iyar 4 would be a Friday: Wednesday and Thursday instead.
+        0 => 2,
+        // Iyar 4 would be a Thursday, Atzma'ut a Friday: Wednesday and Thursday.
+        6 => 3,
+        // Iyar 4 would be a Sunday: Monday and Tuesday (since 5764).
+        2 if y.year >= 5764 => 5,
+        _ => 4,
+    }
+}
+
+/// Birkat Hachamah: every 28 years, when Shmuel's vernal equinox falls at the
+/// start of a Wednesday — Julian 26 March of a Gregorian year ≡ 21 (mod 28).
+fn birkat_hachamah(hebrew_year: i32) -> Option<i32> {
+    // The blessing falls in Nisan, which lies in Gregorian year hebrew_year − 3760.
+    let gregorian_year = hebrew_year - 3760;
+    if gregorian_year.rem_euclid(28) != 21 {
+        return None;
+    }
+    // Julian day number of Julian-calendar 26 March (month counted from March).
+    let (y, m, d) = (gregorian_year as i64 + 4800, 0i64, 26i64);
+    let jdn = d + (153 * m + 2) / 5 + 365 * y + y / 4 - 32083;
+    Some(DateConverter::julian_day_to_rd(jdn as i32))
+}
+
+/// Dates within one Hebrew year.
+struct Year {
+    year: i32,
+    leap: bool,
+}
+
+impl Year {
+    fn new(year: i32) -> Self {
+        Self {
+            year,
+            leap: DateConverter::is_hebrew_leap_year(year),
         }
     }
-    
-    /// Check if Kislev has 29 days (deficient year)
-    fn is_short_kislev(year: i32) -> bool {
-        let year_type = DateConverter::hebrew_year_type(year);
-        matches!(year_type, 
-            crate::calendar::YearType::DeficientCommon | 
-            crate::calendar::YearType::DeficientLeap
-        )
+
+    fn rd(&self, month: HebrewMonth, day: u8) -> i32 {
+        DateConverter::hebrew_to_rd(HebrewDate::new(self.year, month, day))
+            .expect("a fixed day of a valid year")
     }
-    
-    /// Get Omer day (if applicable).
-    /// Omer starts on 16 Nisan and continues for 49 days through 5 Sivan.
-    fn get_omer_day(date: &HebrewDate) -> Option<Holiday> {
-        let omer_day = match date.month {
-            HebrewMonth::Nisan if date.day >= 16 => (date.day - 15) as usize,
-            HebrewMonth::Iyar => (15 + date.day) as usize,
-            HebrewMonth::Sivan if date.day <= 5 => (44 + date.day) as usize,
-            _ => 0,
-        };
-        
-        if omer_day >= 1 && omer_day <= 49 {
-            Some(Holiday::OmerDay(omer_day as u8))
+
+    fn days(&self, month: HebrewMonth) -> u8 {
+        DateConverter::days_in_hebrew_month(self.year, month.to_number(self.leap))
+    }
+
+    /// The months of the year from Tishrei, with their numbers.
+    fn months(&self) -> Vec<(HebrewMonth, u8)> {
+        let last = if self.leap { 13 } else { 12 };
+        (7..=last)
+            .chain(1..=6)
+            .map(|n| {
+                (
+                    HebrewMonth::from_number(n, self.leap).expect("valid month"),
+                    n,
+                )
+            })
+            .collect()
+    }
+
+    fn shabbat_on_or_before(&self, rd: i32) -> i32 {
+        rd - (weekday(rd) - 6).rem_euclid(7)
+    }
+
+    /// A fast that moves to Sunday when its day is Shabbat.
+    fn postponed_from_shabbat(&self, month: HebrewMonth, day: u8) -> i32 {
+        let rd = self.rd(month, day);
+        if weekday(rd) == 6 {
+            rd + 1
         } else {
-            None
+            rd
         }
     }
+
+    /// A fast that moves back to Thursday when its day is Shabbat.
+    fn advanced_from_shabbat(&self, month: HebrewMonth, day: u8) -> i32 {
+        let rd = self.rd(month, day);
+        if weekday(rd) == 6 {
+            rd - 2
+        } else {
+            rd
+        }
+    }
+}
+
+/// Every holiday between two Gregorian dates, inclusive.
+pub fn holidays_between(
+    start: NaiveDate,
+    end: NaiveDate,
+    observance: Observance,
+) -> Result<Vec<(NaiveDate, Holiday)>, CalendarError> {
+    let (from, to) = (
+        DateConverter::gregorian_to_rd(start),
+        DateConverter::gregorian_to_rd(end),
+    );
+    let first = DateConverter::gregorian_to_hebrew(start)?.year;
+    let last = DateConverter::gregorian_to_hebrew(end)?.year;
+    let mut out = Vec::new();
+    for year in first..=last {
+        for (rd, h) in HolidayCalculator::year(year, observance)? {
+            if (from..=to).contains(&rd) {
+                out.push((DateConverter::rd_to_gregorian(rd)?, h));
+            }
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::calendar::HebrewMonth;
-    
-    #[test]
-    fn test_rosh_hashanah() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Tishrei, 1);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::RoshHashanahDay1));
-        // Tishrei 1 is NOT Rosh Chodesh (it's Rosh Hashanah)
-        assert!(!holidays.contains(&Holiday::RoshChodesh));
-    }
-    
-    #[test]
-    fn test_yom_kippur() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Tishrei, 10);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::YomKippur));
-    }
-    
-    #[test]
-    fn test_tzom_gedaliah() {
-        // 5784: Tishrei 3 was Monday (Sept 18, 2023) — not Shabbat, so Tzom Gedaliah on day 3
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Tishrei, 3);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::TzomGedaliah));
-    }
-    
-    #[test]
-    fn test_asara_tevet() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Teves, 10);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::AsaraBTevet));
-    }
-    
-    #[test]
-    fn test_pesach() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Nisan, 15);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::PesachDay1));
-        assert!(!holidays.contains(&Holiday::RoshChodesh));
-    }
-    
-    #[test]
-    fn test_omer() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Nisan, 16);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::OmerDay(1)));
-        
-        let lag_baomer = HebrewDate::new(5784, HebrewMonth::Iyar, 18);
-        let holidays = HolidayCalculator::get_holidays(&lag_baomer).unwrap();
-        assert!(holidays.contains(&Holiday::OmerDay(33)));
-        assert_eq!(Holiday::OmerDay(33).name(), "Omer Day 33 (Lag BaOmer)");
-    }
-    
-    #[test]
-    fn test_chanukah() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Kislev, 25);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::ChanukahDay1));
+    use Holiday::*;
+
+    fn on(y: i32, m: u32, d: u32, observance: Observance) -> Vec<Holiday> {
+        let g = NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        let h = DateConverter::gregorian_to_hebrew(g).unwrap();
+        HolidayCalculator::holidays_for(&h, observance).unwrap()
     }
 
-    // === Sukkot complete cycle ===
-
-    #[test]
-    fn test_sukkot_day1() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Tishrei, 15);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::SukkotDay1));
+    fn diaspora(y: i32, m: u32, d: u32) -> Vec<Holiday> {
+        on(y, m, d, Observance::Diaspora)
     }
 
     #[test]
-    fn test_sukkot_day2() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Tishrei, 16);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::SukkotDay2));
+    fn high_holidays_5784() {
+        assert!(diaspora(2023, 9, 16).contains(&RoshHashanahDay1));
+        assert!(diaspora(2023, 9, 18).contains(&TzomGedaliah));
+        assert!(diaspora(2023, 9, 23).contains(&ShabbatShuva));
+        assert!(diaspora(2023, 9, 25).contains(&YomKippur));
+        assert!(diaspora(2023, 9, 24).contains(&ErevYomKippur));
     }
 
     #[test]
-    fn test_sukkot_chol_hamoed() {
-        let expected = [
-            (17, Holiday::SukkotCholHamoedDay1),
-            (18, Holiday::SukkotCholHamoedDay2),
-            (19, Holiday::SukkotCholHamoedDay3),
-            (20, Holiday::SukkotCholHamoedDay4),
-        ];
-        for (day, expected_holiday) in &expected {
-            let hebrew = HebrewDate::new(5784, HebrewMonth::Tishrei, *day);
-            let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-            assert!(holidays.contains(expected_holiday),
-                "Tishrei {} should contain {:?}", day, expected_holiday);
-        }
+    fn sukkot_differs_in_israel() {
+        // 1 October 2023 was 16 Tishrei 5784.
+        assert!(diaspora(2023, 10, 1).contains(&SukkotDay2));
+        assert!(on(2023, 10, 1, Observance::Israel).contains(&SukkotCholHamoed(2)));
+        assert!(diaspora(2023, 10, 8).contains(&SimchatTorah));
+        let israel = on(2023, 10, 7, Observance::Israel);
+        assert!(israel.contains(&SheminiAtzeret) && israel.contains(&SimchatTorah));
     }
 
     #[test]
-    fn test_hoshana_rabbah() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Tishrei, 21);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::HoshanaRabbah));
+    fn pesach_and_shavuot_are_shorter_in_israel() {
+        assert!(diaspora(2024, 4, 30).contains(&PesachDay8));
+        assert!(on(2024, 4, 30, Observance::Israel).is_empty());
+        assert!(diaspora(2024, 6, 13).contains(&ShavuotDay2));
+        assert!(!on(2024, 6, 13, Observance::Israel).contains(&ShavuotDay2));
     }
 
     #[test]
-    fn test_shemini_atzeret() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Tishrei, 22);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::SheminiAtzeret));
+    fn fasts_move_off_shabbat() {
+        // 5774: 3 Tishrei was Shabbat → Tzom Gedaliah on Sunday.
+        assert!(diaspora(2013, 9, 8).contains(&TzomGedaliah));
+        // 5784: 13 Adar II was Shabbat → Ta'anit Esther on Thursday 21 March 2024.
+        assert!(diaspora(2024, 3, 21).contains(&TaanitEsther));
+        // 5782: 9 Av was Shabbat → observed Sunday 7 August 2022.
+        assert!(diaspora(2022, 8, 7).contains(&TishaBAvObserved));
+        assert!(diaspora(2022, 8, 6).contains(&ErevTishaBAv));
     }
 
     #[test]
-    fn test_simchat_torah() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Tishrei, 23);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::SimchatTorah));
-    }
-
-    // === Chanukah detailed ===
-
-    #[test]
-    fn test_chanukah_all_8_days_short_kislev() {
-        // 5784 is a deficient leap year (Kislev has 29 days)
-        let expected_kislev = [
-            (25, Holiday::ChanukahDay1),
-            (26, Holiday::ChanukahDay2),
-            (27, Holiday::ChanukahDay3),
-            (28, Holiday::ChanukahDay4),
-            (29, Holiday::ChanukahDay5),
-        ];
-        for (day, expected) in &expected_kislev {
-            let hebrew = HebrewDate::new(5784, HebrewMonth::Kislev, *day);
-            let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-            assert!(holidays.contains(expected),
-                "Kislev {} should be {:?}", day, expected);
-        }
-        let expected_teves = [
-            (1, Holiday::ChanukahDay6),
-            (2, Holiday::ChanukahDay7),
-            (3, Holiday::ChanukahDay8),
-        ];
-        for (day, expected) in &expected_teves {
-            let hebrew = HebrewDate::new(5784, HebrewMonth::Teves, *day);
-            let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-            assert!(holidays.contains(expected),
-                "Teves {} should be {:?}", day, expected);
-        }
+    fn chanukah_and_rosh_chodesh_tevet() {
+        // 5784: Kislev had 29 days; Chanukah 8 December 2023 – 15 December 2023.
+        assert!(diaspora(2023, 12, 8).contains(&Chanukah(1)));
+        assert!(diaspora(2023, 12, 15).contains(&Chanukah(8)));
+        let rc = RoshChodesh {
+            month: HebrewMonth::Teves,
+            leap: true,
+        };
+        assert!(diaspora(2023, 12, 13).contains(&rc));
+        assert!(diaspora(2023, 12, 13).contains(&ChagHaBanot));
     }
 
     #[test]
-    fn test_chanukah_all_8_days_long_kislev() {
-        // 5783 is a complete common year (Kislev has 30 days)
-        let expected_kislev = [
-            (25, Holiday::ChanukahDay1),
-            (26, Holiday::ChanukahDay2),
-            (27, Holiday::ChanukahDay3),
-            (28, Holiday::ChanukahDay4),
-            (29, Holiday::ChanukahDay5),
-            (30, Holiday::ChanukahDay6),
-        ];
-        for (day, expected) in &expected_kislev {
-            let hebrew = HebrewDate::new(5783, HebrewMonth::Kislev, *day);
-            let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-            assert!(holidays.contains(expected),
-                "Kislev {} (5783) should be {:?}", day, expected);
-        }
-        let expected_teves = [
-            (1, Holiday::ChanukahDay7),
-            (2, Holiday::ChanukahDay8),
-        ];
-        for (day, expected) in &expected_teves {
-            let hebrew = HebrewDate::new(5783, HebrewMonth::Teves, *day);
-            let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-            assert!(holidays.contains(expected),
-                "Teves {} (5783) should be {:?}", day, expected);
-        }
+    fn special_shabbatot_5784() {
+        assert!(diaspora(2024, 1, 27).contains(&ShabbatShirah));
+        assert!(diaspora(2024, 3, 9).contains(&ShabbatShekalim));
+        assert!(diaspora(2024, 3, 23).contains(&ShabbatZachor));
+        assert!(diaspora(2024, 4, 20).contains(&ShabbatHaGadol));
     }
 
     #[test]
-    fn test_no_chanukah_before_25_kislev() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Kislev, 24);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        let has_chanukah = holidays.iter().any(|h| matches!(h,
-            Holiday::ChanukahDay1 | Holiday::ChanukahDay2 | Holiday::ChanukahDay3 |
-            Holiday::ChanukahDay4 | Holiday::ChanukahDay5 | Holiday::ChanukahDay6 |
-            Holiday::ChanukahDay7 | Holiday::ChanukahDay8));
-        assert!(!has_chanukah, "Kislev 24 should not be Chanukah");
+    fn modern_days_5784() {
+        assert!(diaspora(2024, 5, 6).contains(&YomHaShoah));
+        assert!(diaspora(2024, 5, 13).contains(&YomHaZikaron));
+        assert!(diaspora(2024, 5, 14).contains(&YomHaAtzmaut));
+        assert!(diaspora(2024, 6, 5).contains(&YomYerushalayim));
     }
 
     #[test]
-    fn test_no_chanukah_after_last_day() {
-        // After Chanukah ends in 5784 (short Kislev): Teves 4
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Teves, 4);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        let has_chanukah = holidays.iter().any(|h| matches!(h,
-            Holiday::ChanukahDay1 | Holiday::ChanukahDay2 | Holiday::ChanukahDay3 |
-            Holiday::ChanukahDay4 | Holiday::ChanukahDay5 | Holiday::ChanukahDay6 |
-            Holiday::ChanukahDay7 | Holiday::ChanukahDay8));
-        assert!(!has_chanukah, "Teves 4 should not be Chanukah in 5784");
-    }
-
-    // === Purim ===
-
-    #[test]
-    fn test_purim_leap_year() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Adar, 14);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::Purim));
+    fn birkat_hachamah_every_28_years() {
+        assert!(diaspora(2009, 4, 8).contains(&BirkatHachamah));
+        assert!(diaspora(2037, 4, 8).contains(&BirkatHachamah));
+        assert!(!diaspora(2010, 4, 8).contains(&BirkatHachamah));
     }
 
     #[test]
-    fn test_taanit_esther() {
-        // 5784: Pesach was Tuesday → Adar 13 was Shabbat → fast on Thursday Adar 11
-        let pushed = HebrewDate::new(5784, HebrewMonth::Adar, 11);
-        let holidays = HolidayCalculator::get_holidays(&pushed).unwrap();
-        assert!(holidays.contains(&Holiday::TaanitEsther));
-        let shabbat = HebrewDate::new(5784, HebrewMonth::Adar, 13);
-        assert_eq!(shabbat.day_of_week(), 6);
-        assert!(!HolidayCalculator::get_holidays(&shabbat).unwrap().contains(&Holiday::TaanitEsther));
+    fn names_and_categories() {
+        assert_eq!(SukkotCholHamoed(3).name(), "Sukkot III (Chol HaMoed)");
+        assert_eq!(
+            RoshChodesh {
+                month: HebrewMonth::Adar,
+                leap: true
+            }
+            .name(),
+            "Rosh Chodesh Adar II"
+        );
+        assert_eq!(LagBaOmer.hebrew_name(), "ל״ג בעומר");
+        assert!(YomKippur.is_yom_tov() && YomKippur.is_fast_day());
+        assert!(!HoshanaRabbah.is_yom_tov());
+        assert_eq!(ShabbatHaGadol.category(), HolidayCategory::SpecialShabbat);
     }
 
     #[test]
-    fn test_taanit_esther_normal_5783() {
-        // 5783: Adar 13 was not Shabbat → fast on 13
-        let hebrew = HebrewDate::new(5783, HebrewMonth::Adar, 13);
-        assert_ne!(hebrew.day_of_week(), 6);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::TaanitEsther));
-    }
-
-    #[test]
-    fn test_shushan_purim() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Adar, 15);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::ShushanPurim));
-    }
-
-    #[test]
-    fn test_no_purim_adar_i_leap_year() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::AdarI, 14);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(!holidays.contains(&Holiday::Purim),
-            "Adar I 14 in a leap year should not have Purim");
-    }
-
-    // === Other holidays ===
-
-    #[test]
-    fn test_tu_bishvat() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Shevat, 15);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::TuBiShevat));
-    }
-
-    #[test]
-    fn test_shavuot() {
-        let day1 = HebrewDate::new(5784, HebrewMonth::Sivan, 6);
-        let holidays1 = HolidayCalculator::get_holidays(&day1).unwrap();
-        assert!(holidays1.contains(&Holiday::ShavuotDay1));
-
-        let day2 = HebrewDate::new(5784, HebrewMonth::Sivan, 7);
-        let holidays2 = HolidayCalculator::get_holidays(&day2).unwrap();
-        assert!(holidays2.contains(&Holiday::ShavuotDay2));
-    }
-
-    #[test]
-    fn test_tisha_bav() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Av, 9);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::TishaBAv));
-    }
-
-    #[test]
-    fn test_17_tammuz() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Tammuz, 17);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::ShivaAsarBTammuz));
-    }
-
-    #[test]
-    fn test_tu_bav() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Av, 15);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::TuBAv));
-    }
-
-    // === Rosh Chodesh ===
-
-    #[test]
-    fn test_rosh_chodesh_day_1() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Cheshvan, 1);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::RoshChodesh));
-    }
-
-    #[test]
-    fn test_rosh_chodesh_day_30_long_month() {
-        // Tishrei has 30 days; day 30 is Rosh Chodesh Cheshvan
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Tishrei, 30);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::RoshChodesh));
-    }
-
-    #[test]
-    fn test_no_rosh_chodesh_day_30_short_month() {
-        // Iyar has 29 days; day 30 doesn't exist, but if called should not return Rosh Chodesh
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Iyar, 30);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(!holidays.contains(&Holiday::RoshChodesh),
-            "Iyar has 29 days, day 30 should not be Rosh Chodesh");
-    }
-
-    #[test]
-    fn test_no_rosh_chodesh_tishrei_1() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Tishrei, 1);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(!holidays.contains(&Holiday::RoshChodesh),
-            "Tishrei 1 is Rosh Hashanah, not Rosh Chodesh");
-    }
-
-    #[test]
-    fn test_no_rosh_chodesh_mid_month() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Cheshvan, 15);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(!holidays.contains(&Holiday::RoshChodesh));
-    }
-
-    // === Modern Israeli holidays ===
-
-    #[test]
-    fn test_yom_hashoah_nisan_5783() {
-        // 5783: Nisan 27 was Tuesday → no push
-        let date = HebrewDate::new(5783, HebrewMonth::Nisan, 27);
-        let holidays = HolidayCalculator::get_holidays(&date).unwrap();
-        assert!(holidays.contains(&Holiday::YomHaShoah));
-    }
-
-    #[test]
-    fn test_yom_hashoah_pushed_sunday_5784() {
-        // 5784: Nisan 27 was Sunday → observed Monday Nisan 28
-        let date = HebrewDate::new(5784, HebrewMonth::Nisan, 28);
-        let holidays = HolidayCalculator::get_holidays(&date).unwrap();
-        assert!(holidays.contains(&Holiday::YomHaShoah));
-        let wrong = HolidayCalculator::get_holidays(
-            &HebrewDate::new(5784, HebrewMonth::Nisan, 27),
-        ).unwrap();
-        assert!(!wrong.contains(&Holiday::YomHaShoah));
-        let iyar = HolidayCalculator::get_holidays(
-            &HebrewDate::new(5784, HebrewMonth::Iyar, 27),
-        ).unwrap();
-        assert!(!iyar.contains(&Holiday::YomHaShoah));
-    }
-
-    #[test]
-    fn test_yom_hashoah_pushed_friday_5785() {
-        // 5785: Nisan 27 Friday → observed Thursday Nisan 26
-        let date = HebrewDate::new(5785, HebrewMonth::Nisan, 26);
-        let holidays = HolidayCalculator::get_holidays(&date).unwrap();
-        assert!(holidays.contains(&Holiday::YomHaShoah));
-    }
-
-    #[test]
-    fn test_yom_haatzmaut_5784() {
-        // 5784: Pesach Tuesday → Zikaron Iyar 5, Atzmaut Iyar 6
-        let z = HebrewDate::new(5784, HebrewMonth::Iyar, 5);
-        let a = HebrewDate::new(5784, HebrewMonth::Iyar, 6);
-        assert!(HolidayCalculator::get_holidays(&z).unwrap().contains(&Holiday::YomHaZikaron));
-        assert!(HolidayCalculator::get_holidays(&a).unwrap().contains(&Holiday::YomHaAtzmaut));
-    }
-
-    #[test]
-    fn test_modern_israeli_holidays_5783() {
-        let shoah = HebrewDate::new(5783, HebrewMonth::Nisan, 27);
-        assert!(HolidayCalculator::get_holidays(&shoah).unwrap().contains(&Holiday::YomHaShoah));
-
-        let zikaron = HebrewDate::new(5783, HebrewMonth::Iyar, 4);
-        let atzmaut = HebrewDate::new(5783, HebrewMonth::Iyar, 5);
-        assert!(HolidayCalculator::get_holidays(&zikaron).unwrap().contains(&Holiday::YomHaZikaron));
-        assert!(HolidayCalculator::get_holidays(&atzmaut).unwrap().contains(&Holiday::YomHaAtzmaut));
-    }
-
-    #[test]
-    fn test_yom_hazikaron_5782_advanced() {
-        // 5782: Zikaron Iyar 3, Atzmaut Iyar 4 (advanced from Fri/Sat conflict)
-        let z = HebrewDate::new(5782, HebrewMonth::Iyar, 3);
-        let a = HebrewDate::new(5782, HebrewMonth::Iyar, 4);
-        assert!(HolidayCalculator::get_holidays(&z).unwrap().contains(&Holiday::YomHaZikaron));
-        assert!(HolidayCalculator::get_holidays(&a).unwrap().contains(&Holiday::YomHaAtzmaut));
-    }
-
-    #[test]
-    fn test_yom_hazikaron_5785_pesach_sunday() {
-        // 5785: Pesach Sunday → Zikaron Iyar 2, Atzmaut Iyar 3
-        let z = HebrewDate::new(5785, HebrewMonth::Iyar, 2);
-        let a = HebrewDate::new(5785, HebrewMonth::Iyar, 3);
-        assert!(HolidayCalculator::get_holidays(&z).unwrap().contains(&Holiday::YomHaZikaron));
-        assert!(HolidayCalculator::get_holidays(&a).unwrap().contains(&Holiday::YomHaAtzmaut));
-    }
-
-    #[test]
-    fn test_tisha_bav_postponed_5782() {
-        // Av 9 5782 was Shabbat → observed Sunday Av 10
-        let av9 = HebrewDate::new(5782, HebrewMonth::Av, 9);
-        let av10 = HebrewDate::new(5782, HebrewMonth::Av, 10);
-        assert_eq!(av9.day_of_week(), 6);
-        assert!(!HolidayCalculator::get_holidays(&av9).unwrap().contains(&Holiday::TishaBAv));
-        assert!(HolidayCalculator::get_holidays(&av10).unwrap().contains(&Holiday::TishaBAv));
-    }
-
-    #[test]
-    fn test_tzom_gedaliah_when_pushed() {
-        // 5774: RH Thursday → Tishrei 3 Shabbat → Tzom on Tishrei 4
-        let h3 = HebrewDate::new(5774, HebrewMonth::Tishrei, 3);
-        let h4 = HebrewDate::new(5774, HebrewMonth::Tishrei, 4);
-        assert_eq!(h3.day_of_week(), 6);
-        assert!(!HolidayCalculator::get_holidays(&h3).unwrap().contains(&Holiday::TzomGedaliah));
-        assert!(HolidayCalculator::get_holidays(&h4).unwrap().contains(&Holiday::TzomGedaliah));
-    }
-
-    // === Omer boundaries ===
-
-    #[test]
-    fn test_omer_last_day_nisan() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Nisan, 30);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::OmerDay(15)),
-            "Nisan 30 should be Omer Day 15");
-    }
-
-    #[test]
-    fn test_omer_iyar_1() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Iyar, 1);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::OmerDay(16)));
-    }
-
-    #[test]
-    fn test_omer_sivan_1() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Sivan, 1);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::OmerDay(45)));
-    }
-
-    #[test]
-    fn test_omer_day_49() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Sivan, 5);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        assert!(holidays.contains(&Holiday::OmerDay(49)));
-    }
-
-    #[test]
-    fn test_no_omer_sivan_6() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Sivan, 6);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        let has_omer = holidays.iter().any(|h| matches!(h, Holiday::OmerDay(_)));
-        assert!(!has_omer, "Sivan 6 (Shavuot) should not have Omer");
-    }
-
-    #[test]
-    fn test_no_omer_nisan_15() {
-        let hebrew = HebrewDate::new(5784, HebrewMonth::Nisan, 15);
-        let holidays = HolidayCalculator::get_holidays(&hebrew).unwrap();
-        let has_omer = holidays.iter().any(|h| matches!(h, Holiday::OmerDay(_)));
-        assert!(!has_omer, "Nisan 15 should not have Omer");
-    }
-
-    // === Trait methods ===
-
-    #[test]
-    fn test_is_yom_tov() {
-        assert!(Holiday::RoshHashanahDay1.is_yom_tov());
-        assert!(Holiday::YomKippur.is_yom_tov());
-        assert!(Holiday::SukkotDay1.is_yom_tov());
-        assert!(Holiday::PesachDay1.is_yom_tov());
-        assert!(Holiday::ShavuotDay1.is_yom_tov());
-        assert!(!Holiday::ChanukahDay1.is_yom_tov());
-        assert!(!Holiday::Purim.is_yom_tov());
-        assert!(!Holiday::HoshanaRabbah.is_yom_tov());
-        assert!(!Holiday::RoshChodesh.is_yom_tov());
-    }
-
-    #[test]
-    fn test_requires_candles() {
-        assert!(Holiday::RoshHashanahDay1.requires_candles());
-        assert!(Holiday::ChanukahDay1.requires_candles());
-        assert!(Holiday::ShavuotDay2.requires_candles());
-        assert!(!Holiday::Purim.requires_candles());
-        assert!(!Holiday::TuBiShevat.requires_candles());
-        assert!(!Holiday::RoshChodesh.requires_candles());
-    }
-
-    #[test]
-    fn test_is_fast_day() {
-        assert!(Holiday::YomKippur.is_fast_day());
-        assert!(Holiday::TaanitEsther.is_fast_day());
-        assert!(Holiday::TishaBAv.is_fast_day());
-        assert!(Holiday::ShivaAsarBTammuz.is_fast_day());
-        assert!(Holiday::TzomGedaliah.is_fast_day());
-        assert!(Holiday::AsaraBTevet.is_fast_day());
-        assert!(!Holiday::RoshHashanahDay1.is_fast_day());
-        assert!(!Holiday::Purim.is_fast_day());
-        assert!(!Holiday::ChanukahDay1.is_fast_day());
-    }
-
-    #[test]
-    fn test_holiday_names() {
-        assert_eq!(Holiday::RoshHashanahDay1.name(), "Rosh Hashanah (Day 1)");
-        assert_eq!(Holiday::YomKippur.name(), "Yom Kippur");
-        assert_eq!(Holiday::Purim.name(), "Purim");
-        assert_eq!(Holiday::TuBiShevat.name(), "Tu B'Shevat");
-        assert_eq!(Holiday::OmerDay(33).name(), "Omer Day 33 (Lag BaOmer)");
+    fn omer_and_candles() {
+        let d = |m, day| HebrewDate::new(5784, m, day);
+        assert_eq!(
+            HolidayCalculator::omer_day(&d(HebrewMonth::Nisan, 16)),
+            Some(1)
+        );
+        assert_eq!(
+            HolidayCalculator::omer_day(&d(HebrewMonth::Iyar, 18)),
+            Some(33)
+        );
+        assert_eq!(HolidayCalculator::omer_day(&d(HebrewMonth::Sivan, 6)), None);
+        let candles = |m, day| HolidayCalculator::chanukah_candles_tonight(&d(m, day)).unwrap();
+        assert_eq!(candles(HebrewMonth::Kislev, 24), Some(1));
+        assert_eq!(candles(HebrewMonth::Kislev, 25), Some(2));
+        assert_eq!(candles(HebrewMonth::Teves, 2), Some(8));
+        assert_eq!(candles(HebrewMonth::Teves, 3), None);
     }
 }

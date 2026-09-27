@@ -269,7 +269,11 @@ impl MoladCalculator {
         }
 
         let k = Self::months_from_tishrei(year, month);
-        Self::from_parts(year, month, DateConverter::molad_parts(year) + k * PARTS_PER_LUNATION)
+        Self::from_parts(
+            year,
+            month,
+            DateConverter::molad_parts(year) + k * PARTS_PER_LUNATION,
+        )
     }
 
     /// Every molad announced during Hebrew `year`, Tishrei first.
@@ -296,7 +300,10 @@ impl MoladCalculator {
         ]);
 
         months.sort_by_key(|m| Self::months_from_tishrei(year, *m));
-        months.into_iter().map(|m| Self::of_month(year, m)).collect()
+        months
+            .into_iter()
+            .map(|m| Self::of_month(year, m))
+            .collect()
     }
 
     /// Build a `Molad` from a parts count measured from the Hebrew epoch.
@@ -314,7 +321,11 @@ impl MoladCalculator {
         let chalakim = (remainder % PARTS_PER_MINUTE) as u8;
 
         let civil_hour = ((noon_hours + 12) % 24) as u8;
-        let day_shift = if remainder >= PARTS_PER_HALF_DAY { 1 } else { 0 };
+        let day_shift = if remainder >= PARTS_PER_HALF_DAY {
+            1
+        } else {
+            0
+        };
 
         let rd = DateConverter::hebrew_epoch_rd() as i64 + whole_days - 1 + day_shift;
         let gregorian = DateConverter::rd_to_gregorian(rd as i32)?;

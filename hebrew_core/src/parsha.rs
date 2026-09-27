@@ -1,17 +1,10 @@
-//! Parsha (Torah Portion) Calculation Module
-//!
-//! Computes the weekly Torah portion (parsha) read on Shabbat using the
-//! diaspora keviyah schedule tables from hebcal (sedra.ts).
-//!
-//! Key = `{leap}{rhDay}{yearType}` where rhDay is 1=Sun..7=Sat and
-//! yearType is 0=incomplete, 1=regular, 2=complete (Cheshvan/Kislev lengths).
+//! Weekly Torah portions (parshiyot), for Israel and outside it.
 
+use chrono::{Datelike, NaiveDate, Weekday};
 use serde::{Deserialize, Serialize};
 
-use chrono::Datelike;
-
-use crate::calendar::{DateConverter, HebrewDate, HebrewMonth};
-use crate::CalendarError;
+use crate::calendar::{DateConverter, HebrewDate};
+use crate::{CalendarError, Observance};
 
 /// Torah portion
 ///
@@ -82,8 +75,6 @@ pub enum Parsha {
     ChukatBalak,
     MatotMasei,
     NitzavimVayeilech,
-    // Special
-    HaftarahOnly,
 }
 
 impl Parsha {
@@ -150,7 +141,6 @@ impl Parsha {
             Parsha::ChukatBalak => "Chukat-Balak",
             Parsha::MatotMasei => "Matot-Masei",
             Parsha::NitzavimVayeilech => "Nitzavim-Vayeilech",
-            Parsha::HaftarahOnly => "Haftarah Only",
         }
     }
 
@@ -217,337 +207,1874 @@ impl Parsha {
             Parsha::ChukatBalak => "חקת-בלק",
             Parsha::MatotMasei => "מטות-מסעי",
             Parsha::NitzavimVayeilech => "נצבים-וילך",
-            Parsha::HaftarahOnly => "",
         }
+    }
+
+    /// The single portions this reading covers: one, or two for a double.
+    pub fn portions(&self) -> Vec<Parsha> {
+        match self {
+            Parsha::VayakhelPekudei => vec![Parsha::Vayakhel, Parsha::Pekudei],
+            Parsha::TazriaMetzora => vec![Parsha::Tazria, Parsha::Metzora],
+            Parsha::AchreiMotKedoshim => vec![Parsha::AchreiMot, Parsha::Kedoshim],
+            Parsha::BeharBechukotai => vec![Parsha::Behar, Parsha::Bechukotai],
+            Parsha::ChukatBalak => vec![Parsha::Chukat, Parsha::Balak],
+            Parsha::MatotMasei => vec![Parsha::Matot, Parsha::Masei],
+            Parsha::NitzavimVayeilech => vec![Parsha::Nitzavim, Parsha::Vayeilech],
+            single => vec![*single],
+        }
+    }
+
+    /// Position in the Torah, Bereshit = 0 to Vezot HaBerachah = 53. A double
+    /// portion has the index of its first half.
+    pub fn index(&self) -> usize {
+        let first = self.portions()[0];
+        if first == Parsha::VezotHaberacha {
+            return 53;
+        }
+        SINGLES
+            .iter()
+            .position(|p| *p == first)
+            .expect("every single portion is listed")
     }
 }
 
-/// Parsha calculator (diaspora schedule).
+/// Weekly Torah portions.
 ///
-/// Port of hebcal's sedra keviyah tables:
-/// https://github.com/hebcal/hebcal-es6/blob/main/src/sedra.ts
+/// Each Hebrew year's readings are fixed by three facts about it: whether it
+/// is a leap year, the weekday of Rosh Hashanah, and whether Cheshvan and
+/// Kislev are short, regular or long. That gives fourteen kinds of year, and
+/// for each one the sequence of Shabbat readings, from the first Shabbat on or
+/// after Rosh Hashanah to the last one before the next, is a fixed list.
+/// Outside Israel a festival's second day can fall on Shabbat and push the
+/// portions a week behind Israel's until a double portion catches them up, so
+/// each kind of year has two lists. The lists below were read off Hebcal's
+/// schedule for 1950–2080 (every year of a kind gave the same list), and the
+/// review harness checks them against it for every Shabbat in that range.
 pub struct ParshaCalculator;
 
-/// Schedule entry: non-negative = single parsha index (0=Bereshit),
-/// negative = doubled pair starting at -id, CHAG = holiday reading.
+/// One Shabbat in a schedule.
 #[derive(Clone, Copy)]
-enum SedraEntry {
-    Single(i8),
-    Double(i8), // stores the positive first index; means pair (i, i+1)
-    Chag,
+enum Entry {
+    /// A single portion, by its index from Bereshit (0) to Ha'azinu (52).
+    S(u8),
+    /// Two portions read together, starting at this index.
+    D(u8),
+    /// A festival reading replaces the weekly portion.
+    C,
+}
+use Entry::{C, D, S};
+
+/// Short, regular or long year: Cheshvan and Kislev both 29 days, 29 and 30,
+/// or both 30.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum YearKind {
+    Deficient,
+    Regular,
+    Complete,
 }
 
-use SedraEntry::*;
+const SINGLES: [Parsha; 53] = [
+    Parsha::Bereshit,
+    Parsha::Noach,
+    Parsha::LechLecha,
+    Parsha::Vayera,
+    Parsha::ChayeiSara,
+    Parsha::Toldot,
+    Parsha::Vayetzei,
+    Parsha::Vayishlach,
+    Parsha::Vayeshev,
+    Parsha::Miketz,
+    Parsha::Vayigash,
+    Parsha::Vayechi,
+    Parsha::Shemot,
+    Parsha::Vaera,
+    Parsha::Bo,
+    Parsha::Beshalach,
+    Parsha::Yitro,
+    Parsha::Mishpatim,
+    Parsha::Terumah,
+    Parsha::Tetzaveh,
+    Parsha::KiTisa,
+    Parsha::Vayakhel,
+    Parsha::Pekudei,
+    Parsha::Vayikra,
+    Parsha::Tzav,
+    Parsha::Shemini,
+    Parsha::Tazria,
+    Parsha::Metzora,
+    Parsha::AchreiMot,
+    Parsha::Kedoshim,
+    Parsha::Emor,
+    Parsha::Behar,
+    Parsha::Bechukotai,
+    Parsha::Bamidbar,
+    Parsha::Nasso,
+    Parsha::Behaalotecha,
+    Parsha::Shelach,
+    Parsha::Korach,
+    Parsha::Chukat,
+    Parsha::Balak,
+    Parsha::Pinchas,
+    Parsha::Matot,
+    Parsha::Masei,
+    Parsha::Devarim,
+    Parsha::Vaetchanan,
+    Parsha::Eikev,
+    Parsha::Reeh,
+    Parsha::Shoftim,
+    Parsha::KiTeitzei,
+    Parsha::KiTavo,
+    Parsha::Nitzavim,
+    Parsha::Vayeilech,
+    Parsha::HaAzinu,
+];
 
 impl ParshaCalculator {
-    /// 0-based single-parsha map (0..=52); 53 = Vezot Haberacha unused on Shabbat.
-    const SINGLES: &'static [Parsha] = &[
-        Parsha::Bereshit, Parsha::Noach, Parsha::LechLecha, Parsha::Vayera,
-        Parsha::ChayeiSara, Parsha::Toldot, Parsha::Vayetzei, Parsha::Vayishlach,
-        Parsha::Vayeshev, Parsha::Miketz, Parsha::Vayigash, Parsha::Vayechi,
-        Parsha::Shemot, Parsha::Vaera, Parsha::Bo, Parsha::Beshalach,
-        Parsha::Yitro, Parsha::Mishpatim, Parsha::Terumah, Parsha::Tetzaveh,
-        Parsha::KiTisa, Parsha::Vayakhel, Parsha::Pekudei, Parsha::Vayikra,
-        Parsha::Tzav, Parsha::Shemini, Parsha::Tazria, Parsha::Metzora,
-        Parsha::AchreiMot, Parsha::Kedoshim, Parsha::Emor, Parsha::Behar,
-        Parsha::Bechukotai, Parsha::Bamidbar, Parsha::Nasso, Parsha::Behaalotecha,
-        Parsha::Shelach, Parsha::Korach, Parsha::Chukat, Parsha::Balak,
-        Parsha::Pinchas, Parsha::Matot, Parsha::Masei, Parsha::Devarim,
-        Parsha::Vaetchanan, Parsha::Eikev, Parsha::Reeh, Parsha::Shoftim,
-        Parsha::KiTeitzei, Parsha::KiTavo, Parsha::Nitzavim, Parsha::Vayeilech,
-        Parsha::HaAzinu,
-    ];
+    /// The portion read outside Israel on the Shabbat on or after `date`, or
+    /// `None` when a festival reading replaces it that week.
+    pub fn get_parsha(date: &HebrewDate) -> Result<Option<Parsha>, CalendarError> {
+        Self::get_parsha_for(date, Observance::Diaspora)
+    }
 
-    fn double_parsha(first: i8) -> Parsha {
-        match first {
-            21 => Parsha::VayakhelPekudei,
-            26 => Parsha::TazriaMetzora,
-            28 => Parsha::AchreiMotKedoshim,
-            31 => Parsha::BeharBechukotai,
-            38 => Parsha::ChukatBalak,
-            41 => Parsha::MatotMasei,
-            50 => Parsha::NitzavimVayeilech,
-            _ => Parsha::HaftarahOnly,
+    /// The portion read on the Shabbat on or after `date`, or `None` when a
+    /// festival reading replaces it that week.
+    pub fn get_parsha_for(
+        date: &HebrewDate,
+        observance: Observance,
+    ) -> Result<Option<Parsha>, CalendarError> {
+        let shabbat = Self::next_shabbat(DateConverter::hebrew_to_gregorian(*date)?);
+        let shabbat_rd = DateConverter::gregorian_to_rd(shabbat);
+        let year = DateConverter::gregorian_to_hebrew(shabbat)?.year;
+        let (mut first, mut schedule) = Self::schedule(year, observance)?;
+        if shabbat_rd < first {
+            (first, schedule) = Self::schedule(year - 1, observance)?;
+        }
+        let week = ((shabbat_rd - first) / 7) as usize;
+        schedule.get(week).map(|e| Self::parsha(*e)).ok_or_else(|| {
+            CalendarError::CalculationError(format!("no reading for week {week} of year {year}"))
+        })
+    }
+
+    /// Every Shabbat of Hebrew year `year` with its reading.
+    pub fn year_readings(
+        year: i32,
+        observance: Observance,
+    ) -> Result<Vec<(NaiveDate, Option<Parsha>)>, CalendarError> {
+        let (first, schedule) = Self::schedule(year, observance)?;
+        schedule
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                let date = DateConverter::rd_to_gregorian(first + 7 * i as i32)?;
+                Ok((date, Self::parsha(*e)))
+            })
+            .collect()
+    }
+
+    /// The Shabbat on or after `date`.
+    pub fn next_shabbat(date: NaiveDate) -> NaiveDate {
+        let ahead = (6 - date.weekday().num_days_from_sunday() as i64).rem_euclid(7);
+        date + chrono::Duration::days(ahead)
+    }
+
+    fn parsha(entry: Entry) -> Option<Parsha> {
+        match entry {
+            S(i) => Some(SINGLES[i as usize]),
+            D(i) => Some(match i {
+                21 => Parsha::VayakhelPekudei,
+                26 => Parsha::TazriaMetzora,
+                28 => Parsha::AchreiMotKedoshim,
+                31 => Parsha::BeharBechukotai,
+                38 => Parsha::ChukatBalak,
+                41 => Parsha::MatotMasei,
+                50 => Parsha::NitzavimVayeilech,
+                _ => unreachable!("no double portion starts at {i}"),
+            }),
+            C => None,
         }
     }
 
-    fn entry_to_parsha(e: SedraEntry) -> Parsha {
-        match e {
-            Single(i) => Self::SINGLES[i as usize],
-            Double(i) => Self::double_parsha(i),
-            Chag => Parsha::HaftarahOnly,
-        }
-    }
-
-    /// Get the parsha for a Shabbat (or the Shabbat containing this date).
-    pub fn get_parsha(date: &HebrewDate) -> Result<Parsha, CalendarError> {
-        let shabbat_date = Self::find_shabbat(date)?;
-        Self::calculate_parsha_for_shabbat(shabbat_date)
-    }
-
-    fn find_shabbat(date: &HebrewDate) -> Result<HebrewDate, CalendarError> {
-        let gregorian = DateConverter::hebrew_to_gregorian(*date)?;
-        let weekday = gregorian.weekday().num_days_from_sunday();
-        if weekday == 6 {
-            return Ok(*date);
-        }
-        let days_to_add = (6i64 - weekday as i64).rem_euclid(7);
-        let shabbat_gregorian = gregorian + chrono::Duration::days(days_to_add);
-        DateConverter::gregorian_to_hebrew(shabbat_gregorian)
-    }
-
-    fn calculate_parsha_for_shabbat(date: HebrewDate) -> Result<Parsha, CalendarError> {
-        let year = date.year;
-        let (first_sat_rd, schedule) = Self::schedule_for_year(year)?;
-        let shabbat_rd = DateConverter::hebrew_to_rd(date)?;
-        if shabbat_rd < first_sat_rd {
-            // Before this year's first Saturday — use previous year
-            let (prev_first, prev_sched) = Self::schedule_for_year(year - 1)?;
-            let week = ((shabbat_rd - prev_first) / 7) as usize;
-            if week < prev_sched.len() {
-                return Ok(Self::entry_to_parsha(prev_sched[week]));
-            }
-            return Ok(Parsha::HaftarahOnly);
-        }
-        let week = ((shabbat_rd - first_sat_rd) / 7) as usize;
-        if week < schedule.len() {
-            return Ok(Self::entry_to_parsha(schedule[week]));
-        }
-        // Past end of this year's schedule — next year
-        let (next_first, next_sched) = Self::schedule_for_year(year + 1)?;
-        let week = ((shabbat_rd - next_first) / 7) as usize;
-        if week < next_sched.len() {
-            Ok(Self::entry_to_parsha(next_sched[week]))
-        } else {
-            Ok(Parsha::HaftarahOnly)
-        }
-    }
-
-    /// Returns (RD of first Saturday on/after RH, schedule array).
-    fn schedule_for_year(year: i32) -> Result<(i32, Vec<SedraEntry>), CalendarError> {
-        let rh_rd = DateConverter::rosh_hashanah(year);
-        // First Saturday on or after RH:
-        // RD % 7: 0=Sat, 1=Sun, ..., 6=Fri. We want RD with rem 0.
-        let rem = rh_rd.rem_euclid(7);
-        let first_sat = if rem == 0 { rh_rd } else { rh_rd + (7 - rem) };
-
+    /// The first Shabbat on or after Rosh Hashanah of `year` (R.D.) and the
+    /// year's readings from there.
+    fn schedule(
+        year: i32,
+        observance: Observance,
+    ) -> Result<(i32, &'static [Entry]), CalendarError> {
+        let rosh_hashanah = DateConverter::rosh_hashanah(year);
+        let weekday = DateConverter::rd_to_gregorian(rosh_hashanah)?.weekday();
+        let first = rosh_hashanah + (6 - weekday.num_days_from_sunday() as i32).rem_euclid(7);
         let leap = DateConverter::is_hebrew_leap_year(year);
-        // RH day: 1=Sun ... 7=Sat (hebcal convention)
-        let rh_date = HebrewDate::new(year, HebrewMonth::Tishrei, 1);
-        let rh_day = rh_date.day_of_week() + 1; // 0=Sun → 1
-        let ytype = match DateConverter::hebrew_year_type(year) {
-            crate::calendar::YearType::DeficientCommon | crate::calendar::YearType::DeficientLeap => 0,
-            crate::calendar::YearType::RegularCommon | crate::calendar::YearType::RegularLeap => 1,
-            crate::calendar::YearType::CompleteCommon | crate::calendar::YearType::CompleteLeap => 2,
+        let kind = match DateConverter::days_in_hebrew_year(year) {
+            353 | 383 => YearKind::Deficient,
+            354 | 384 => YearKind::Regular,
+            _ => YearKind::Complete,
         };
-        let key = format!("{}{}{}", leap as u8, rh_day, ytype);
-        let schedule = Self::lookup_diaspora_schedule(&key)
-            .ok_or_else(|| CalendarError::CalculationError(
-                format!("Unknown sedra year type key {} for year {}", key, year)
-            ))?;
-        Ok((first_sat, schedule))
+        let schedule = match observance {
+            Observance::Diaspora => Self::diaspora_schedule(leap, weekday, kind),
+            Observance::Israel => Self::israel_schedule(leap, weekday, kind),
+        };
+        schedule.map(|s| (first, s)).ok_or_else(|| {
+            CalendarError::CalculationError(format!(
+                "no reading schedule for year {year} ({kind:?}, Rosh Hashanah on {weekday})"
+            ))
+        })
     }
 
-    fn lookup_diaspora_schedule(key: &str) -> Option<Vec<SedraEntry>> {
-        // hebcal first tries `{leap}{rhDay}{type}`, then appends IL flag
-        // (0=diaspora, 1=Israel) when the short key is absent.
-        let candidates = [
-            key.to_string(),
-            format!("{}0", key), // diaspora
-        ];
-        // Also resolve known aliases used in sedra.ts
-        for cand in &candidates {
-            let resolved = match cand.as_str() {
-                "0221" => "020",
-                "0310" => "0220",
-                "0311" => "020",
-                "1310" => "1220",
-                "1311" => "1221",
-                "1721" => "170",
-                other => other,
-            };
-            if let Some(sched) = Self::build_type(resolved) {
-                return Some(sched);
-            }
-        }
-        None
-    }
-
-    fn build_type(key: &str) -> Option<Vec<SedraEntry>> {
-        let entries: &[SedraEntry] = match key {
-            "020" => &[Single(51), Single(52), Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Double(21), Single(23), Single(24), Chag, Single(25), Double(26), Double(28), Single(30), Double(31), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Double(50)],
-            "0220" => &[Single(51), Single(52), Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Double(21), Single(23), Single(24), Chag, Single(25), Double(26), Double(28), Single(30), Double(31), Single(33), Chag, Single(34), Single(35), Single(36), Single(37), Double(38), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Double(50)],
-            "0510" => &[Single(52), Chag, Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Double(21), Single(23), Single(24), Chag, Chag, Single(25), Double(26), Double(28), Single(30), Double(31), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Single(50)],
-            "0511" => &[Single(52), Chag, Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Double(21), Single(23), Single(24), Chag, Single(25), Double(26), Double(28), Single(30), Single(31), Single(32), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Single(50)],
-            "052" => &[Single(52), Chag, Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Single(21), Single(22), Single(23), Single(24), Chag, Single(25), Double(26), Double(28), Single(30), Double(31), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Single(50)],
-            "070" => &[Chag, Single(52), Chag, Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Double(21), Single(23), Single(24), Chag, Single(25), Double(26), Double(28), Single(30), Double(31), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Single(50)],
-            "072" => &[Chag, Single(52), Chag, Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Double(21), Single(23), Single(24), Chag, Single(25), Double(26), Double(28), Single(30), Double(31), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Double(50)],
-            "1200" => &[Single(51), Single(52), Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Single(21), Single(22), Single(23), Single(24), Single(25), Single(26), Single(27), Chag, Single(28), Single(29), Single(30), Single(31), Single(32), Single(33), Chag, Single(34), Single(35), Single(36), Single(37), Double(38), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Double(50)],
-            "1201" => &[Single(51), Single(52), Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Single(21), Single(22), Single(23), Single(24), Single(25), Single(26), Single(27), Chag, Single(28), Single(29), Single(30), Single(31), Single(32), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Double(50)],
-            "1220" => &[Single(51), Single(52), Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Single(21), Single(22), Single(23), Single(24), Single(25), Single(26), Single(27), Chag, Chag, Single(28), Single(29), Single(30), Single(31), Single(32), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Single(50)],
-            "1221" => &[Single(51), Single(52), Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Single(21), Single(22), Single(23), Single(24), Single(25), Single(26), Single(27), Chag, Single(28), Single(29), Single(30), Single(31), Single(32), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Single(41), Single(42), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Single(50)],
-            "150" => &[Single(52), Chag, Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Single(21), Single(22), Single(23), Single(24), Single(25), Single(26), Single(27), Single(28), Chag, Single(29), Single(30), Single(31), Single(32), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Single(41), Single(42), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Single(50)],
-            "152" => &[Single(52), Chag, Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Single(21), Single(22), Single(23), Single(24), Single(25), Single(26), Single(27), Single(28), Chag, Single(29), Single(30), Single(31), Single(32), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Single(41), Single(42), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Double(50)],
-            "170" => &[Chag, Single(52), Chag, Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Single(21), Single(22), Single(23), Single(24), Single(25), Single(26), Single(27), Chag, Single(28), Single(29), Single(30), Single(31), Single(32), Single(33), Single(34), Single(35), Single(36), Single(37), Single(38), Single(39), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Double(50)],
-            "1720" => &[Chag, Single(52), Chag, Chag, Single(0), Single(1), Single(2), Single(3), Single(4), Single(5), Single(6), Single(7), Single(8), Single(9), Single(10), Single(11), Single(12), Single(13), Single(14), Single(15), Single(16), Single(17), Single(18), Single(19), Single(20), Single(21), Single(22), Single(23), Single(24), Single(25), Single(26), Single(27), Chag, Single(28), Single(29), Single(30), Single(31), Single(32), Single(33), Chag, Single(34), Single(35), Single(36), Single(37), Double(38), Single(40), Double(41), Single(43), Single(44), Single(45), Single(46), Single(47), Single(48), Single(49), Double(50)],
+    /// Readings outside Israel.
+    fn diaspora_schedule(
+        leap: bool,
+        rosh_hashanah: Weekday,
+        kind: YearKind,
+    ) -> Option<&'static [Entry]> {
+        use Weekday::*;
+        use YearKind::*;
+        Some(match (leap, rosh_hashanah, kind) {
+            (false, Mon, Deficient) => &[
+                S(51),
+                S(52),
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                D(21),
+                S(23),
+                S(24),
+                C,
+                S(25),
+                D(26),
+                D(28),
+                S(30),
+                D(31),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                D(50),
+            ],
+            (false, Mon, Complete) => &[
+                S(51),
+                S(52),
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                D(21),
+                S(23),
+                S(24),
+                C,
+                S(25),
+                D(26),
+                D(28),
+                S(30),
+                D(31),
+                S(33),
+                C,
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                D(38),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                D(50),
+            ],
+            (false, Tue, Regular) => &[
+                S(51),
+                S(52),
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                D(21),
+                S(23),
+                S(24),
+                C,
+                S(25),
+                D(26),
+                D(28),
+                S(30),
+                D(31),
+                S(33),
+                C,
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                D(38),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                D(50),
+            ],
+            (false, Thu, Regular) => &[
+                S(52),
+                C,
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                D(21),
+                S(23),
+                S(24),
+                C,
+                C,
+                S(25),
+                D(26),
+                D(28),
+                S(30),
+                D(31),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                S(50),
+            ],
+            (false, Thu, Complete) => &[
+                S(52),
+                C,
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                S(21),
+                S(22),
+                S(23),
+                S(24),
+                C,
+                S(25),
+                D(26),
+                D(28),
+                S(30),
+                D(31),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                S(50),
+            ],
+            (false, Sat, Deficient) => &[
+                C,
+                S(52),
+                C,
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                D(21),
+                S(23),
+                S(24),
+                C,
+                S(25),
+                D(26),
+                D(28),
+                S(30),
+                D(31),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                S(50),
+            ],
+            (false, Sat, Complete) => &[
+                C,
+                S(52),
+                C,
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                D(21),
+                S(23),
+                S(24),
+                C,
+                S(25),
+                D(26),
+                D(28),
+                S(30),
+                D(31),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                D(50),
+            ],
+            (true, Mon, Deficient) => &[
+                S(51),
+                S(52),
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                S(21),
+                S(22),
+                S(23),
+                S(24),
+                S(25),
+                S(26),
+                S(27),
+                C,
+                S(28),
+                S(29),
+                S(30),
+                S(31),
+                S(32),
+                S(33),
+                C,
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                D(38),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                D(50),
+            ],
+            (true, Mon, Complete) => &[
+                S(51),
+                S(52),
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                S(21),
+                S(22),
+                S(23),
+                S(24),
+                S(25),
+                S(26),
+                S(27),
+                C,
+                C,
+                S(28),
+                S(29),
+                S(30),
+                S(31),
+                S(32),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                S(50),
+            ],
+            (true, Tue, Regular) => &[
+                S(51),
+                S(52),
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                S(21),
+                S(22),
+                S(23),
+                S(24),
+                S(25),
+                S(26),
+                S(27),
+                C,
+                C,
+                S(28),
+                S(29),
+                S(30),
+                S(31),
+                S(32),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                S(50),
+            ],
+            (true, Thu, Deficient) => &[
+                S(52),
+                C,
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                S(21),
+                S(22),
+                S(23),
+                S(24),
+                S(25),
+                S(26),
+                S(27),
+                S(28),
+                C,
+                S(29),
+                S(30),
+                S(31),
+                S(32),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                S(41),
+                S(42),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                S(50),
+            ],
+            (true, Thu, Complete) => &[
+                S(52),
+                C,
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                S(21),
+                S(22),
+                S(23),
+                S(24),
+                S(25),
+                S(26),
+                S(27),
+                S(28),
+                C,
+                S(29),
+                S(30),
+                S(31),
+                S(32),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                S(41),
+                S(42),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                D(50),
+            ],
+            (true, Sat, Deficient) => &[
+                C,
+                S(52),
+                C,
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                S(21),
+                S(22),
+                S(23),
+                S(24),
+                S(25),
+                S(26),
+                S(27),
+                C,
+                S(28),
+                S(29),
+                S(30),
+                S(31),
+                S(32),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                D(50),
+            ],
+            (true, Sat, Complete) => &[
+                C,
+                S(52),
+                C,
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                S(21),
+                S(22),
+                S(23),
+                S(24),
+                S(25),
+                S(26),
+                S(27),
+                C,
+                S(28),
+                S(29),
+                S(30),
+                S(31),
+                S(32),
+                S(33),
+                C,
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                D(38),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                D(50),
+            ],
             _ => return None,
-        };
-        Some(entries.to_vec())
+        })
+    }
+
+    /// Readings in Israel.
+    fn israel_schedule(
+        leap: bool,
+        rosh_hashanah: Weekday,
+        kind: YearKind,
+    ) -> Option<&'static [Entry]> {
+        use Weekday::*;
+        use YearKind::*;
+        Some(match (leap, rosh_hashanah, kind) {
+            (false, Mon, Deficient) => &[
+                S(51),
+                S(52),
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                D(21),
+                S(23),
+                S(24),
+                C,
+                S(25),
+                D(26),
+                D(28),
+                S(30),
+                D(31),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                D(50),
+            ],
+            (false, Mon, Complete) => &[
+                S(51),
+                S(52),
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                D(21),
+                S(23),
+                S(24),
+                C,
+                S(25),
+                D(26),
+                D(28),
+                S(30),
+                D(31),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                D(50),
+            ],
+            (false, Tue, Regular) => &[
+                S(51),
+                S(52),
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                D(21),
+                S(23),
+                S(24),
+                C,
+                S(25),
+                D(26),
+                D(28),
+                S(30),
+                D(31),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                D(50),
+            ],
+            (false, Thu, Regular) => &[
+                S(52),
+                C,
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                D(21),
+                S(23),
+                S(24),
+                C,
+                S(25),
+                D(26),
+                D(28),
+                S(30),
+                S(31),
+                S(32),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                S(50),
+            ],
+            (false, Thu, Complete) => &[
+                S(52),
+                C,
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                S(21),
+                S(22),
+                S(23),
+                S(24),
+                C,
+                S(25),
+                D(26),
+                D(28),
+                S(30),
+                D(31),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                S(50),
+            ],
+            (false, Sat, Deficient) => &[
+                C,
+                S(52),
+                C,
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                D(21),
+                S(23),
+                S(24),
+                C,
+                S(25),
+                D(26),
+                D(28),
+                S(30),
+                D(31),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                S(50),
+            ],
+            (false, Sat, Complete) => &[
+                C,
+                S(52),
+                C,
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                D(21),
+                S(23),
+                S(24),
+                C,
+                S(25),
+                D(26),
+                D(28),
+                S(30),
+                D(31),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                D(50),
+            ],
+            (true, Mon, Deficient) => &[
+                S(51),
+                S(52),
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                S(21),
+                S(22),
+                S(23),
+                S(24),
+                S(25),
+                S(26),
+                S(27),
+                C,
+                S(28),
+                S(29),
+                S(30),
+                S(31),
+                S(32),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                D(50),
+            ],
+            (true, Mon, Complete) => &[
+                S(51),
+                S(52),
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                S(21),
+                S(22),
+                S(23),
+                S(24),
+                S(25),
+                S(26),
+                S(27),
+                C,
+                S(28),
+                S(29),
+                S(30),
+                S(31),
+                S(32),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                S(41),
+                S(42),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                S(50),
+            ],
+            (true, Tue, Regular) => &[
+                S(51),
+                S(52),
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                S(21),
+                S(22),
+                S(23),
+                S(24),
+                S(25),
+                S(26),
+                S(27),
+                C,
+                S(28),
+                S(29),
+                S(30),
+                S(31),
+                S(32),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                S(41),
+                S(42),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                S(50),
+            ],
+            (true, Thu, Deficient) => &[
+                S(52),
+                C,
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                S(21),
+                S(22),
+                S(23),
+                S(24),
+                S(25),
+                S(26),
+                S(27),
+                S(28),
+                C,
+                S(29),
+                S(30),
+                S(31),
+                S(32),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                S(41),
+                S(42),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                S(50),
+            ],
+            (true, Thu, Complete) => &[
+                S(52),
+                C,
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                S(21),
+                S(22),
+                S(23),
+                S(24),
+                S(25),
+                S(26),
+                S(27),
+                S(28),
+                C,
+                S(29),
+                S(30),
+                S(31),
+                S(32),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                S(41),
+                S(42),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                D(50),
+            ],
+            (true, Sat, Deficient) => &[
+                C,
+                S(52),
+                C,
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                S(21),
+                S(22),
+                S(23),
+                S(24),
+                S(25),
+                S(26),
+                S(27),
+                C,
+                S(28),
+                S(29),
+                S(30),
+                S(31),
+                S(32),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                D(50),
+            ],
+            (true, Sat, Complete) => &[
+                C,
+                S(52),
+                C,
+                C,
+                S(0),
+                S(1),
+                S(2),
+                S(3),
+                S(4),
+                S(5),
+                S(6),
+                S(7),
+                S(8),
+                S(9),
+                S(10),
+                S(11),
+                S(12),
+                S(13),
+                S(14),
+                S(15),
+                S(16),
+                S(17),
+                S(18),
+                S(19),
+                S(20),
+                S(21),
+                S(22),
+                S(23),
+                S(24),
+                S(25),
+                S(26),
+                S(27),
+                C,
+                S(28),
+                S(29),
+                S(30),
+                S(31),
+                S(32),
+                S(33),
+                S(34),
+                S(35),
+                S(36),
+                S(37),
+                S(38),
+                S(39),
+                S(40),
+                D(41),
+                S(43),
+                S(44),
+                S(45),
+                S(46),
+                S(47),
+                S(48),
+                S(49),
+                D(50),
+            ],
+            _ => return None,
+        })
     }
 }
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::calendar::{DateConverter, HebrewMonth};
-    use chrono::NaiveDate;
+    use crate::calendar::HebrewMonth;
+
+    fn on(y: i32, m: u32, d: u32, observance: Observance) -> Option<Parsha> {
+        let g = NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        let h = DateConverter::gregorian_to_hebrew(g).unwrap();
+        ParshaCalculator::get_parsha_for(&h, observance).unwrap()
+    }
 
     #[test]
-    fn test_get_parsha_no_panic_for_5784() {
-        let rh = DateConverter::rosh_hashanah(5784);
-        let start = DateConverter::rd_to_gregorian(rh).unwrap();
-        let end = DateConverter::rd_to_gregorian(DateConverter::rosh_hashanah(5785)).unwrap();
-        let mut current = start;
-        while current.weekday().num_days_from_sunday() != 6 {
-            current = current.succ_opt().unwrap();
+    fn every_year_of_three_centuries_reads_the_whole_torah() {
+        for year in 5600..5900 {
+            for observance in [Observance::Diaspora, Observance::Israel] {
+                let readings = ParshaCalculator::year_readings(year, observance).unwrap();
+                let mut read = Vec::new();
+                for (_, p) in &readings {
+                    if let Some(p) = p {
+                        read.extend(p.portions())
+                    }
+                }
+                // Each Hebrew year reads Ha'azinu (and sometimes Vayeilech)
+                // of the previous cycle first, then Bereshit through Nitzavim.
+                let start = read.iter().position(|p| *p == Parsha::Bereshit).unwrap();
+                let cycle = &read[start..];
+                assert_eq!(
+                    cycle.first(),
+                    Some(&Parsha::Bereshit),
+                    "{year} {observance:?}"
+                );
+                for pair in cycle.windows(2) {
+                    assert_eq!(
+                        pair[1].index(),
+                        pair[0].index() + 1,
+                        "{year} {observance:?}: {:?} then {:?}",
+                        pair[0],
+                        pair[1]
+                    );
+                }
+            }
         }
-        while current < end {
-            let hebrew = DateConverter::gregorian_to_hebrew(current).unwrap();
-            let _parsha = ParshaCalculator::get_parsha(&hebrew).unwrap();
-            current += chrono::Duration::days(7);
+    }
+
+    #[test]
+    fn diaspora_5784_against_hebcal() {
+        use Parsha::*;
+        let cases = [
+            (2023, 10, 14, Some(Bereshit)),
+            (2023, 10, 21, Some(Noach)),
+            (2024, 3, 9, Some(Vayakhel)),
+            (2024, 3, 16, Some(Pekudei)),
+            (2024, 4, 20, Some(Metzora)),
+            (2024, 4, 27, None), // Pesach, Chol HaMoed
+            (2024, 5, 4, Some(AchreiMot)),
+            (2024, 8, 3, Some(MatotMasei)),
+            (2024, 9, 28, Some(NitzavimVayeilech)),
+            (2024, 10, 5, Some(HaAzinu)),
+        ];
+        for (y, m, d, expected) in cases {
+            assert_eq!(on(y, m, d, Observance::Diaspora), expected, "{y}-{m}-{d}");
         }
     }
 
     #[test]
-    fn test_get_parsha_no_panic_for_5783() {
-        let rh = DateConverter::rosh_hashanah(5783);
-        let start = DateConverter::rd_to_gregorian(rh).unwrap();
-        let end = DateConverter::rd_to_gregorian(DateConverter::rosh_hashanah(5784)).unwrap();
-        let mut current = start;
-        while current.weekday().num_days_from_sunday() != 6 {
-            current = current.succ_opt().unwrap();
-        }
-        while current < end {
-            let hebrew = DateConverter::gregorian_to_hebrew(current).unwrap();
-            let _parsha = ParshaCalculator::get_parsha(&hebrew).unwrap();
-            current += chrono::Duration::days(7);
-        }
+    fn israel_runs_a_week_ahead_after_a_festival_shabbat() {
+        // 1955: the second day of Shavuot fell on Shabbat 28 May, outside Israel only.
+        assert_eq!(on(1955, 5, 28, Observance::Diaspora), None);
+        assert_eq!(on(1955, 5, 28, Observance::Israel), Some(Parsha::Nasso));
+        assert_eq!(on(1955, 6, 4, Observance::Diaspora), Some(Parsha::Nasso));
+        // The diaspora catches up by reading Chukat and Balak together.
+        assert_eq!(
+            on(1955, 7, 2, Observance::Diaspora),
+            Some(Parsha::ChukatBalak)
+        );
+        assert_eq!(on(1955, 7, 2, Observance::Israel), Some(Parsha::Balak));
     }
 
     #[test]
-    fn test_shabbat_bereishit_5784() {
-        // Oct 14, 2023 = Tishrei 29, 5784
-        let date = HebrewDate::new(5784, HebrewMonth::Tishrei, 29);
-        assert_eq!(ParshaCalculator::get_parsha(&date).unwrap(), Parsha::Bereshit);
+    fn a_weekday_gives_the_coming_shabbat() {
+        // Sunday 15 October 2023 → Shabbat 21 October, Noach.
+        let sunday = HebrewDate::new(5784, HebrewMonth::Tishrei, 30);
+        assert_eq!(
+            ParshaCalculator::get_parsha(&sunday).unwrap(),
+            Some(Parsha::Noach)
+        );
     }
 
     #[test]
-    fn test_shabbat_noach_5784() {
-        let date = HebrewDate::new(5784, HebrewMonth::Cheshvan, 6);
-        assert_eq!(ParshaCalculator::get_parsha(&date).unwrap(), Parsha::Noach);
-    }
-
-    #[test]
-    fn test_find_shabbat() {
-        let shabbat_date = HebrewDate::new(5784, HebrewMonth::Tishrei, 15);
-        let shabbat = ParshaCalculator::find_shabbat(&shabbat_date).unwrap();
-        assert_eq!(shabbat.day, 15);
-
-        let sunday = HebrewDate::new(5784, HebrewMonth::Tishrei, 16);
-        let shabbat = ParshaCalculator::find_shabbat(&sunday).unwrap();
-        assert_eq!(shabbat.day, 22);
-    }
-
-    #[test]
-    fn test_find_shabbat_monday() {
-        let monday = HebrewDate::new(5784, HebrewMonth::Tishrei, 3);
-        let shabbat = ParshaCalculator::find_shabbat(&monday).unwrap();
-        assert_eq!(shabbat.day, 8);
-    }
-
-    #[test]
-    fn test_find_shabbat_friday() {
-        let friday = HebrewDate::new(5784, HebrewMonth::Tishrei, 14);
-        let shabbat = ParshaCalculator::find_shabbat(&friday).unwrap();
-        assert_eq!(shabbat.day, 15);
-    }
-
-    #[test]
-    fn test_parsha_names() {
+    fn names() {
         assert_eq!(Parsha::Bereshit.name(), "Bereshit");
         assert_eq!(Parsha::Bereshit.hebrew_name(), "בראשית");
         assert_eq!(Parsha::VayakhelPekudei.name(), "Vayakhel-Pekudei");
-        assert_eq!(Parsha::NitzavimVayeilech.name(), "Nitzavim-Vayeilech");
-    }
-
-    #[test]
-    fn test_5784_against_hebcal() {
-        let cases = [
-            (2023, 10, 14, Parsha::Bereshit),
-            (2023, 10, 21, Parsha::Noach),
-            (2024, 3, 9, Parsha::Vayakhel),
-            (2024, 3, 16, Parsha::Pekudei),
-            (2024, 3, 23, Parsha::Vayikra),
-            (2024, 4, 13, Parsha::Tazria),
-            (2024, 4, 20, Parsha::Metzora),
-            (2024, 4, 27, Parsha::HaftarahOnly), // Pesach Chol HaMoed
-            (2024, 5, 4, Parsha::AchreiMot),
-            (2024, 5, 11, Parsha::Kedoshim),
-            (2024, 8, 3, Parsha::MatotMasei),
-            (2024, 8, 10, Parsha::Devarim),
-            (2024, 8, 17, Parsha::Vaetchanan),
-            (2024, 8, 31, Parsha::Reeh),
-            (2024, 9, 28, Parsha::NitzavimVayeilech),
-            (2024, 10, 5, Parsha::HaAzinu),
-        ];
-        for (y, m, d, expected) in cases {
-            let g = NaiveDate::from_ymd_opt(y, m, d).unwrap();
-            let h = DateConverter::gregorian_to_hebrew(g).unwrap();
-            let got = ParshaCalculator::get_parsha(&h).unwrap();
-            assert_eq!(got, expected, "{}-{:02}-{:02} ({}): got {:?}, expected {:?}",
-                y, m, d, h.format(), got, expected);
-        }
-    }
-
-    #[test]
-    fn test_5784_year_key() {
-        // leap, RH Saturday (7), deficient (0) → "170"
-        let (first_sat, sched) = ParshaCalculator::schedule_for_year(5784).unwrap();
-        let rh = DateConverter::rosh_hashanah(5784);
-        assert_eq!(rh.rem_euclid(7), 0, "RH 5784 should be Saturday");
-        assert_eq!(first_sat, rh);
-        assert!(!sched.is_empty());
-    }
-}
-
-#[cfg(test)]
-mod extra_checks {
-    use super::*;
-    use crate::calendar::{DateConverter, HebrewMonth};
-    use chrono::NaiveDate;
-
-    #[test]
-    fn test_5783_against_hebcal_sample() {
-        let cases = [
-            (2022, 10, 22, Parsha::Bereshit),
-            (2023, 3, 25, Parsha::Vayikra),
-            (2023, 4, 15, Parsha::Shemini),
-            (2023, 4, 22, Parsha::TazriaMetzora),
-            (2023, 7, 8, Parsha::Pinchas),
-            (2023, 9, 9, Parsha::NitzavimVayeilech),
-        ];
-        for (y, m, d, expected) in cases {
-            let g = NaiveDate::from_ymd_opt(y, m, d).unwrap();
-            let h = DateConverter::gregorian_to_hebrew(g).unwrap();
-            let got = ParshaCalculator::get_parsha(&h).unwrap();
-            assert_eq!(got, expected, "{}-{:02}-{:02} ({}): got {:?}", y, m, d, h.format(), got);
-        }
-    }
-
-    #[test]
-    fn test_adar_ii_format() {
-        let d = HebrewDate::new(5784, HebrewMonth::Adar, 14);
-        assert!(d.format().contains("Adar II"), "got {}", d.format());
+        assert_eq!(
+            Parsha::VayakhelPekudei.portions(),
+            vec![Parsha::Vayakhel, Parsha::Pekudei]
+        );
     }
 }

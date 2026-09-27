@@ -153,7 +153,9 @@ fn molad_announcement_uses_the_synagogue_form() {
         "Friday evening, 59 minutes and 1 chelek after 8:00 PM"
     );
     assert_eq!(
-        MoladCalculator::of_month(5786, Elul).unwrap().announcement(),
+        MoladCalculator::of_month(5786, Elul)
+            .unwrap()
+            .announcement(),
         "Thursday morning, 15 minutes after 8:00 AM"
     );
 
@@ -174,7 +176,8 @@ fn molad_steps_by_exactly_the_mean_lunation() {
         for pair in months.windows(2) {
             let delta = pair[1].parts_since_epoch() - pair[0].parts_since_epoch();
             assert_eq!(
-                delta, PARTS_PER_LUNATION,
+                delta,
+                PARTS_PER_LUNATION,
                 "{} → {} of {}",
                 pair[0].hebrew_month.name(),
                 pair[1].hebrew_month.name(),
@@ -188,7 +191,11 @@ fn molad_steps_by_exactly_the_mean_lunation() {
     let elul = MoladCalculator::of_month(5786, Elul).unwrap();
     let next = MoladCalculator::of_tishrei(5787).unwrap();
     let gap = next.parts_since_epoch() - elul.parts_since_epoch();
-    assert!((PARTS_PER_LUNATION..2 * PARTS_PER_LUNATION).contains(&gap), "{}", gap);
+    assert!(
+        (PARTS_PER_LUNATION..2 * PARTS_PER_LUNATION).contains(&gap),
+        "{}",
+        gap
+    );
 }
 
 #[test]
@@ -234,7 +241,11 @@ fn molad_announced_hours_use_both_numberings() {
 fn molad_rejects_impossible_requests() {
     // Adar I exists only in a leap year.
     let err = MoladCalculator::of_month(5786, AdarI).unwrap_err();
-    assert!(matches!(err, CalendarError::CalculationError(_)), "{:?}", err);
+    assert!(
+        matches!(err, CalendarError::CalculationError(_)),
+        "{:?}",
+        err
+    );
     assert!(MoladCalculator::of_month(5787, AdarI).is_ok());
 
     assert!(matches!(
