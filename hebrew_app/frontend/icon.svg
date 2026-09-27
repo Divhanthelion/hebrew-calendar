@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#27408b"/>
+      <stop offset="1" stop-color="#0e1a44"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f3d27a"/>
+      <stop offset="1" stop-color="#c9982e"/>
+    </linearGradient>
+    <linearGradient id="page" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fffdf7"/>
+      <stop offset="1" stop-color="#f1e9d6"/>
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#bg)"/>
+  <!-- calendar page -->
+  <rect x="212" y="248" width="600" height="560" rx="72" fill="url(#page)"/>
+  <path d="M212 320a72 72 0 0 1 72-72h456a72 72 0 0 1 72 72v64H212z" fill="url(#gold)"/>
+  <rect x="330" y="196" width="44" height="120" rx="22" fill="#fffdf7"/>
+  <rect x="650" y="196" width="44" height="120" rx="22" fill="#fffdf7"/>
+  <!-- aleph, drawn as strokes so it needs no font -->
+  <g fill="none" stroke="#1b2d6b" stroke-width="52" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M400 470 L624 730"/>
+    <path d="M628 468 C 640 540 610 570 560 590"/>
+    <path d="M396 732 C 384 660 414 630 464 610"/>
+  </g>
+  <!-- new moon crescent -->
+  <mask id="crescent">
+    <circle cx="846" cy="146" r="78" fill="#fff"/>
+    <circle cx="880" cy="122" r="68" fill="#000"/>
+  </mask>
+  <circle cx="846" cy="146" r="78" fill="url(#gold)" mask="url(#crescent)"/>
+</svg>

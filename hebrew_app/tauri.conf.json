@@ -1,58 +1,41 @@
 {
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Hebrew Calendar",
+  "version": "0.2.0",
+  "identifier": "io.github.divhanthelion.hebrewcalendar",
   "build": {
-    "beforeBuildCommand": "",
-    "beforeDevCommand": "",
-    "devPath": "./frontend",
-    "distDir": "./frontend/dist",
-    "withGlobalTauri": true
+    "frontendDist": "frontend"
   },
-  "tauri": {
-    "allowlist": {
-      "all": true
-    },
-    "bundle": {
-      "active": true,
-      "category": "Productivity",
-      "copyright": "",
-      "deb": {
-        "depends": []
-      },
-      "externalBin": [],
-      "icon": [],
-      "identifier": "com.hebrewcalendar.app",
-      "longDescription": "A dual-mode Hebrew-Gregorian calendar application with Zmanim calculations",
-      "macOS": {
-        "entitlements": null,
-        "exceptionDomain": "",
-        "frameworks": [],
-        "providerShortName": null,
-        "signingIdentity": null
-      },
-      "resources": [],
-      "shortDescription": "Hebrew Calendar",
-      "targets": "all",
-      "windows": {
-        "certificateThumbprint": null,
-        "digestAlgorithm": "sha256",
-        "timestampUrl": ""
-      }
-    },
-    "security": {
-      "csp": null
-    },
-    "updater": {
-      "active": false
-    },
+  "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
-        "fullscreen": false,
-        "height": 800,
-        "resizable": true,
+        "label": "main",
         "title": "Hebrew Calendar",
-        "width": 1200,
-        "minWidth": 800,
-        "minHeight": 600
+        "width": 1320,
+        "height": 900,
+        "minWidth": 420,
+        "minHeight": 600,
+        "resizable": true
       }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Productivity",
+    "copyright": "MIT License",
+    "shortDescription": "Hebrew calendar with holidays, Torah readings and zmanim",
+    "longDescription": "A Hebrew calendar for Israel and the diaspora: every holiday and fast, the weekly Torah reading, zmanim in your own time zone, candle lighting, the molad and Daf Yomi.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
     ]
   }
 }

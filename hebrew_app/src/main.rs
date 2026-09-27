@@ -1,83 +1,83 @@
-//! Hebrew Calendar Application
-//! 
-//! Dual-mode application that can run as either:
-//! - A desktop GUI application (Tauri)
-//! - An HTTP API server (Axum)
-//! 
-//! Usage:
-//!   hebrew_app              # Run GUI mode (default)
-//!   hebrew_app --server     # Run API server mode
-//!   hebrew_app --server -p 8080  # Run API server on port 8080
+//! Hebrew Calendar: a desktop window by default, or a web server with
+//! `--server`.
+//!
+//!   hebrew_app                      # the desktop app
+//!   hebrew_app --server             # http://127.0.0.1:3000
+//!   hebrew_app --server --host 0.0.0.0 --port 8080
+
+// A release build of the desktop app opens no console window on Windows.
+#![cfg_attr(
+    all(not(debug_assertions), feature = "gui"),
+    windows_subsystem = "windows"
+)]
 
 use clap::Parser;
-use tracing::info;
 
 mod config;
+mod query;
 
 #[cfg(feature = "server")]
 mod api;
-
+#[cfg(feature = "server")]
+mod frontend;
 #[cfg(feature = "gui")]
 mod gui;
 
-/// Hebrew Calendar Application - Dual Mode (GUI / API Server)
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(
+    version,
+    about = "A Hebrew calendar with holidays, Torah readings and zmanim"
+)]
 struct Args {
-    /// Run in API server mode
+    /// Run as a web server instead of opening a window.
     #[arg(long, short = 's')]
     server: bool,
-    
-    /// Port for API server (only used with --server)
+
+    /// Port for the web server.
     #[arg(long, short = 'p', default_value_t = 3000)]
     port: u16,
-    
-    /// Host for API server (only used with --server)
-    #[arg(long, short = 'H', default_value = "0.0.0.0")]
+
+    /// Address for the web server; 0.0.0.0 to serve other machines.
+    #[arg(long, short = 'H', default_value = "127.0.0.1")]
     host: String,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
-    
-    // Parse CLI arguments
+fn main() -> anyhow::Result<()> {
+    attach_console();
     let args = Args::parse();
-    
-    // Load configuration
-    let config = config::AppConfig::load()?;
-    info!("Configuration loaded from {:?}", config::AppConfig::config_path()?);
-    
-    // Determine mode and launch
+    let config = config::AppConfig::load();
+
     if args.server {
         #[cfg(feature = "server")]
         {
-            info!("🚀 Starting in API SERVER mode on {}:{}", args.host, args.port);
-            api::launch(config, args.port).await?;
+            let runtime = tokio::runtime::Runtime::new()?;
+            return runtime.block_on(api::serve(config, &args.host, args.port));
         }
-        
         #[cfg(not(feature = "server"))]
-        {
-            eprintln!("Error: Server mode not available. Compile with --features server");
-            std::process::exit(1);
-        }
-    } else {
-        #[cfg(feature = "gui")]
-        {
-            info!("🖥️  Starting in GUI mode");
-            gui::launch(config)?;
-        }
-        
-        #[cfg(not(feature = "gui"))]
-        {
-            eprintln!("Error: GUI mode not available. Compile with --features gui");
-            eprintln!("Hint: Use --server flag to run in API mode");
-            std::process::exit(1);
-        }
+        anyhow::bail!("this build has no web server; build with --features server");
     }
-    
-    Ok(())
+
+    #[cfg(feature = "gui")]
+    {
+        gui::launch(config)
+    }
+    #[cfg(not(feature = "gui"))]
+    {
+        let _ = config;
+        anyhow::bail!("this build has no window; run with --server, or build with --features gui")
+    }
 }
+
+/// A windowed release build has no console of its own; when started from a
+/// terminal (for `--server` or `--help`), write to that terminal.
+#[cfg(all(windows, not(debug_assertions), feature = "gui"))]
+fn attach_console() {
+    use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+    // SAFETY: AttachConsole has no preconditions; failing (no parent console) is harmless.
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
+#[cfg(not(all(windows, not(debug_assertions), feature = "gui")))]
+fn attach_console() {}

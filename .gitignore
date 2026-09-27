@@ -1,23 +1,20 @@
 # Build output
 /target/
+/hebrew_app/gen/
 
-# Tauri
-/src-tauri/target/
-/dist/
+# Hebcal responses cached by tools/check_against_hebcal.py
+/.hebcal-cache/
 
-# Ralph leftovers (not product code)
-.ralph/
-
-# OS
+# Editors and OS
 .DS_Store
+.vscode/
+.idea/
 
-# GH_Audit hygiene
-.DS_Store
+# Secrets
 .env
 .env.*
 !.env.example
+
+# Python
 __pycache__/
 *.pyc
-target/
-dist/
-.hebcal-cache/
