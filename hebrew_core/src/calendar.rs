@@ -218,6 +218,12 @@ impl DateConverter {
         Self::hebrew_new_year(year)
     }
     
+    /// Hebrew epoch in R.D. (Rata Die), exposed for the molad arithmetic in
+    /// [`crate::molad`], which converts parts-since-epoch into civil dates.
+    pub(crate) fn hebrew_epoch_rd() -> i32 {
+        Self::HEBREW_EPOCH_RD
+    }
+
     /// Convert Gregorian date to R.D.
     pub fn gregorian_to_rd(date: NaiveDate) -> i32 {
         Self::julian_day_to_rd(Self::gregorian_to_julian_day(date))
@@ -301,6 +307,29 @@ impl DateConverter {
     
     // ──────────────── Hebrew New Year (Rosh Hashanah) ────────────────
     
+    /// Mean molad of Tishrei for `year`, as chalakim (parts) elapsed since the
+    /// Hebrew epoch (`HEBREW_EPOCH_RD`, a Monday at 6 pm).
+    ///
+    /// This is the single source of molad arithmetic in the crate: both the
+    /// Rosh Hashanah day-count below and [`crate::molad::MoladCalculator`] call
+    /// it, so an announced molad can never drift from the calendar.
+    ///
+    /// - Months elapsed from year 1 to `year`: floor((235 × year − 234) / 19).
+    /// - Parts elapsed: 12084 + PARTS_PER_LUNATION × months_elapsed, where the
+    ///   12084 places the molad of Tishrei of year 1 at 5h 204p into the epoch
+    ///   day (Monday, 5:11:20 AM counted from the civil midnight that begins
+    ///   that Monday; the epoch *moment* itself is 6 pm Sunday evening).
+    ///
+    /// Note that PARTS_PER_LUNATION holds only the fraction of the mean month
+    /// beyond its 29 whole days (12h 793p = 13,753 parts), so the whole days
+    /// are added separately: `29 × months_elapsed`.
+    ///
+    /// The value is a raw mean conjunction: no dehiyyah of any kind is applied.
+    pub(crate) fn molad_parts(year: i32) -> i64 {
+        let months_elapsed: i64 = (235i64 * year as i64 - 234) / 19;
+        12084 + Self::PARTS_PER_LUNATION * months_elapsed + 29 * Self::PARTS_PER_DAY * months_elapsed
+    }
+    
     /// Number of days from the epoch to the molad of Tishrei for `year`,
     /// with the Lo ADU Rosh postponement applied.
     ///
@@ -311,17 +340,8 @@ impl DateConverter {
     /// Lisp code reference:
     /// <https://github.com/EdReingold/calendar-code2/blob/main/calendar.l#L2261>
     fn hebrew_calendar_elapsed_days(year: i32) -> i32 {
-        // Months elapsed from year 1 to `year`:
-        // floor((235 × year − 234) / 19)
-        let months_elapsed = ((235i64 * year as i64 - 234) / 19) as i64;
-        
-        // Parts elapsed: the molad of Tishrei year 1 was at 5h 204p
-        // after the epoch (Monday 5:11:20 AM in parts).
-        // 12084 = 5×1080 + 204 + epoch alignment constant.
-        let parts_elapsed: i64 = 12084 + Self::PARTS_PER_LUNATION * months_elapsed;
-        
-        // Days: 29 full days per lunation plus whole days from the parts
-        let days: i64 = 29 * months_elapsed + parts_elapsed / Self::PARTS_PER_DAY;
+        // Whole days from the epoch to the molad of Tishrei of `year`.
+        let days: i64 = Self::molad_parts(year) / Self::PARTS_PER_DAY;
         
         // Dehiyyah: Lo ADU Rosh
         // Postpone by 1 day if Rosh Hashanah would fall on Sun, Wed, or Fri
